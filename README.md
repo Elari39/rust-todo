@@ -114,3 +114,9 @@ A：不会。数据库结构自动迁移（v0.2 补 `projects` 表、v0.3 补 `s
 **Q：窗口是怎么区分主窗口和磁贴的？**
 
 A：两个窗口加载同一份前端，按 Tauri 窗口 label（`main` / `tile`）在 `App.vue` 里切换渲染。磁贴窗口由 async 命令按需创建——注意在 Windows 上必须在 async command 里创建 webview，同步 command 里创建会得到白屏窗口。
+
+## ❓ 许可问答
+
+**Q：这个项目用什么开源协议？**
+
+A：[MIT License](LICENSE)。可以自由使用、修改、分发（包括商用），只需在副本中保留版权与许可声明。
