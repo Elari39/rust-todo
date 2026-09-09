@@ -2,7 +2,7 @@
 
 # rust-todo
 
-基于 **Tauri 2 + Vue 3 + Rust + SQLite** 的 Windows 桌面待办管理应用（v0.3.2）
+基于 **Tauri 2 + Vue 3 + Rust + SQLite** 的 Windows 桌面待办管理应用（v0.4.0）
 
 [![CI](https://github.com/Elari39/rust-todo/actions/workflows/ci.yml/badge.svg)](https://github.com/Elari39/rust-todo/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Elari39/rust-todo)](https://github.com/Elari39/rust-todo/releases/latest)
