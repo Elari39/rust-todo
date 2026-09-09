@@ -1,6 +1,5 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
-// @ts-expect-error type error without @types/node package
 import process from "node:process";
 const host = process.env.TAURI_DEV_HOST;
 
@@ -25,8 +24,9 @@ export default defineConfig(() => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri` and local session state
+      //    (.mimosa files get locked by the session process and EBUSY-crash the watcher)
+      ignored: ["**/src-tauri/**", "**/.mimosa/**", "**/.zcode/**", "**/node_modules/**"],
     },
   },
 }));
