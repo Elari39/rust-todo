@@ -1,8 +1,35 @@
 # rust-todo
 
-> 基于 **Tauri 2 + Vue 3 + Rust + SQLite** 的 Windows 桌面待办管理应用（v0.3.1）
+> 基于 **Tauri 2 + Vue 3 + Rust + SQLite** 的 Windows 桌面待办管理应用（v0.3.2）
 
 轻量、本地优先、带系统托盘与置顶磁贴的 Todo 工具。界面用 Vue 还原现代仪表盘风格，业务逻辑、存储与系统集成全部由 Rust 完成。
+
+## 📦 下载安装
+
+前往 [GitHub Releases](https://github.com/Elari39/rust-todo/releases/latest) 下载（由 CI 自动构建并发布）：
+
+- `Todo_x.y.z_x64-setup.exe` — NSIS 安装包，双击安装
+- `Todo_x.y.z_x64_portable.zip` — 免安装便携版，解压后直接运行 `todo.exe`
+
+两者都需要系统 WebView2 Runtime（Windows 10/11 一般已内置）。
+
+## ✨ 界面预览
+
+今日视图：
+
+![今日视图](docs/img/today.png)
+
+| 全部任务 | 日历 |
+| --- | --- |
+| ![全部任务](docs/img/all-tasks.png) | ![日历](docs/img/calendar.png) |
+
+| 甘特图 | 项目跟踪 |
+| --- | --- |
+| ![甘特图](docs/img/gantt.png) | ![项目跟踪](docs/img/projects.png) |
+
+| 设置 | 置顶磁贴（独立小窗） |
+| --- | --- |
+| ![设置](docs/img/settings.png) | ![置顶磁贴](docs/img/tile.png) |
 
 ---
 
@@ -81,7 +108,7 @@ A：
 npm run tauri build
 ```
 
-产物为 NSIS 安装包（`src-tauri/target/release/bundle/nsis/`）。
+产物为 NSIS 安装包（`src-tauri/target/release/bundle/nsis/`）。推送 `v*` 标签后，Release 工作流（`.github/workflows/release.yml`）会自动在 CI 构建安装包与免安装便携版 zip，并挂到对应的 GitHub Release（先为草稿，确认资产后发布）。
 
 **Q：怎么跑测试？**
 
@@ -101,17 +128,19 @@ A：
 ```
 ├── src/                    # Vue 3 前端
 │   ├── components/         # 视图与组件（今日/全部/日历/甘特/项目/设置/磁贴）
-│   ├── composables/        # useTasks / useProjects / useSettings / useReminders
-│   ├── utils/datetime.ts   # 时间格式化与到期判定
+│   ├── composables/        # useTasks / useProjects / useSettings / useReminders / useClock
+│   ├── utils/              # datetime.ts（时间格式化与到期判定）、reminders.ts（提醒窗口判定）
 │   └── api.ts              # invoke 封装
 ├── src-tauri/              # Rust 后端
 │   └── src/
 │       ├── db.rs           # SQLite（tasks / projects 表与迁移、示例数据）
-│       ├── commands.rs     # #[tauri::command] IPC 层
+│       ├── commands.rs     # #[tauri::command] IPC 层（数据库命令经 spawn_blocking 后台执行）
+│       ├── model.rs        # Task / Project / Settings 等数据模型
 │       ├── settings.rs     # settings.json 持久化
 │       ├── platform.rs     # Windows 关机检测（SM_SHUTTINGDOWN）
-│       └── lib.rs          # 托盘、窗口事件、插件注册
-└── src-tauri/capabilities/ # Tauri 2 权限声明（main + tile 窗口）
+│       ├── main.rs         # 入口
+│       └── lib.rs          # 托盘、窗口事件、插件注册（单实例 / 通知 / 自启）
+└── src-tauri/capabilities/ # Tauri 2 权限声明（main + tile 窗口各自最小权限）
 ```
 
 **Q：数据存在哪里？如何备份？**
@@ -124,7 +153,11 @@ A：不会。数据库结构自动迁移（v0.2 补 `projects` 表、v0.3 补 `s
 
 **Q：窗口是怎么区分主窗口和磁贴的？**
 
-A：两个窗口加载同一份前端，按 Tauri 窗口 label（`main` / `tile`）在 `App.vue` 里切换渲染。磁贴窗口由 async 命令按需创建——注意在 Windows 上必须在 async command 里创建 webview，同步 command 里创建会得到白屏窗口。
+A：两个窗口加载同一份前端，按 Tauri 窗口 label（`main` / `tile`）在 `App.vue` 里切换渲染。磁贴窗口由 async 命令按需创建——注意在 Windows 上必须在 async command 里创建 webview，同步 command 里创建会得到白屏窗口；托盘菜单同样经由 async runtime 派发，避免与命令争锁死锁。
+
+**Q：可以同时开两个应用实例吗？**
+
+A：不能，也不需要。应用内置单实例保护（`tauri-plugin-single-instance`），二次启动会直接聚焦已有主窗口；数据库启用 WAL 与 `busy_timeout` 兜底，杜绝双进程并发写冲突。
 
 ## ❓ 许可问答
 
