@@ -1,5 +1,5 @@
 use crate::db;
-use crate::model::{NewTask, Project, Settings, Task, TaskPatch};
+use crate::model::{BackupPayload, NewTask, Project, Settings, Task, TaskPatch};
 use crate::settings as settings_store;
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -81,7 +81,7 @@ pub fn toggle_tile_inner(app: &tauri::AppHandle) -> Result<bool, String> {
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(true)
-        .background_color(tauri::utils::config::Color(239, 232, 216, 255))
+        .background_color(tauri::utils::config::Color(237, 242, 251, 255))
         .build()
         .map_err(|err| err.to_string())?;
     Ok(true)
@@ -260,8 +260,7 @@ pub fn data_dir(state: State<'_, AppState>) -> Result<String, String> {
 pub async fn export_backup(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<String, String> {
-    let db = Arc::clone(&state.db);
+) -> Result<String, String> {    let db = Arc::clone(&state.db);
     let settings = Arc::clone(&state.settings);
     let (tasks, projects, snapshot) = tauri::async_runtime::spawn_blocking(
         move || -> Result<(Vec<Task>, Vec<Project>, Settings), String> {
@@ -303,4 +302,25 @@ pub async fn export_backup(
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+/// 导入备份：文件读取与解析都放进 with_db 的阻塞线程，避免冻结 UI。
+/// 返回导入的任务/项目数量描述，供前端提示。
+#[tauri::command]
+pub async fn import_backup(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<String, String> {
+    let db = Arc::clone(&state.db);
+    let (task_count, project_count) = with_db(&db, move |conn| {
+        let text =
+            std::fs::read_to_string(&path).map_err(|err| format!("读取备份文件失败: {err}"))?;
+        let payload: BackupPayload =
+            serde_json::from_str(&text).map_err(|err| format!("备份文件格式无效: {err}"))?;
+        db::import_replace(conn, payload)
+    })
+    .await?;
+    emit_tasks_changed(&window);
+    Ok(format!("{task_count} 个任务、{project_count} 个项目"))
 }

@@ -1,11 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-capability",
-  "description": "主窗口：通知、开机自启与核心能力",
+  "description": "主窗口：通知、自启、文件对话框、打开链接与自绘标题栏窗口控制",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "autostart:default",
-    "notification:default"
+    "notification:default",
+    "dialog:default",
+    "opener:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized"
   ]
 }

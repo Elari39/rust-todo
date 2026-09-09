@@ -57,11 +57,28 @@ mod tests {
         let settings = Settings {
             notification_lead_minutes: 90,
             close_to_tray: false,
+            locale: "zh-CN".into(),
         };
         save(&dir, &settings).unwrap();
         let loaded = load(&dir);
         assert_eq!(loaded.notification_lead_minutes, 90);
         assert!(!loaded.close_to_tray);
+        assert_eq!(loaded.locale, "zh-CN");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_settings_without_locale_get_default() {
+        let dir = temp_dir("legacy-locale");
+        // 0.3.x 的 settings.json 没有 locale 字段：反序列化应回退默认值
+        std::fs::write(
+            dir.join(FILE),
+            r#"{"notificationLeadMinutes": 30, "closeToTray": true}"#,
+        )
+        .unwrap();
+        let loaded = load(&dir);
+        assert_eq!(loaded.notification_lead_minutes, 30);
+        assert_eq!(loaded.locale, "zh-CN");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

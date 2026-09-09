@@ -1,4 +1,4 @@
-use crate::model::{NewTask, Project, Task, TaskPatch};
+use crate::model::{BackupPayload, NewTask, Project, Task, TaskPatch};
 use chrono::Local;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
@@ -118,8 +118,8 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, String> {
 fn seed_projects(conn: &Connection) -> Result<(), String> {
     for (name, color) in [
         ("工作", "#3D5BDB"),
-        ("生活", "#16A34A"),
-        ("学习", "#F59E0B"),
+        ("生活", "#F59E0B"),
+        ("学习", "#EC4899"),
     ] {
         insert_project(conn, name, color)?;
     }
@@ -377,7 +377,8 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
     // 改期或重开都让任务重新进入提醒流程：已提醒过的任务改了截止时间，
     // 不重置 notified 会导致新提醒永不触发
     let due_changed = patch.due_at.is_some() && due_at != current.due_at;
-    let reopened = patch.status.as_deref() == Some("pending") && current.status == "completed";
+    let reopened = matches!(patch.status.as_deref(), Some("pending") | Some("in_progress"))
+        && current.status == "completed";
     let notified = if due_changed || reopened {
         false
     } else {
@@ -400,7 +401,10 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
             (current.status.clone(), current.completed_at.clone())
         }
         Some("completed") => ("completed".to_string(), Some(now_stamp())),
-        Some("pending") => ("pending".to_string(), None),
+        // pending / in_progress 都是未完成态，清除完成时间
+        Some("pending") | Some("in_progress") => {
+            (patch.status.clone().unwrap(), None)
+        }
         Some(_) => return Err("无效的任务状态".into()),
         None => (current.status, current.completed_at),
     };
@@ -462,6 +466,175 @@ pub fn reorder(conn: &mut Connection, ordered_ids: &[String]) -> Result<(), Stri
         .map_err(to_err)?;
     }
     tx.commit().map_err(to_err)
+}
+
+struct BackupTaskRow {
+    id: String,
+    title: String,
+    notes: Option<String>,
+    status: String,
+    priority: String,
+    kind: String,
+    start_at: Option<String>,
+    due_at: Option<String>,
+    completed_at: Option<String>,
+    project_id: Option<String>,
+    notified: bool,
+    sort_order: i64,
+    created_at: String,
+    updated_at: String,
+}
+
+/// 从备份载荷整体替换任务与项目：任何一条记录不合法都整体拒绝，
+/// 不会出现导入一半的中间状态。返回 (任务数, 项目数)。
+pub fn import_replace(
+    conn: &mut Connection,
+    payload: BackupPayload,
+) -> Result<(usize, usize), String> {
+    if let Some(version) = payload.version {
+        if version != 1 {
+            return Err(format!("不支持的备份文件版本: {version}"));
+        }
+    }
+
+    // ---- 预校验并归一化项目 ----
+    let mut project_rows: Vec<(String, String, String, String)> = Vec::new();
+    let mut project_ids: Vec<String> = Vec::new();
+    for item in &payload.projects {
+        let name = item.name.trim().to_string();
+        if name.is_empty() {
+            return Err("备份中的项目名不能为空".into());
+        }
+        if project_rows.iter().any(|(_, existing, _, _)| *existing == name) {
+            return Err(format!("备份中的项目名重复: {name}"));
+        }
+        let id = match item.id.as_deref() {
+            Some(id) if !id.trim().is_empty() => id.trim().to_string(),
+            _ => Uuid::new_v4().to_string(),
+        };
+        if project_ids.contains(&id) {
+            return Err("备份中的项目 ID 重复".into());
+        }
+        let color = item
+            .color
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "#3D5BDB".to_string());
+        let created_at = match &item.created_at {
+            Some(value) => {
+                validate_stamp(Some(value.as_str()))?;
+                value.clone()
+            }
+            None => now_stamp(),
+        };
+        project_ids.push(id.clone());
+        project_rows.push((id, name, color, created_at));
+    }
+
+    // ---- 预校验并归一化任务 ----
+    let mut task_rows: Vec<BackupTaskRow> = Vec::new();
+    let mut task_ids: Vec<String> = Vec::new();
+    for item in &payload.tasks {
+        let title = item.title.trim().to_string();
+        if title.is_empty() {
+            return Err("备份中的任务标题不能为空".into());
+        }
+        for stamp in [&item.start_at, &item.due_at, &item.completed_at] {
+            validate_stamp(stamp.as_deref())?;
+        }
+        for stamp in [&item.created_at, &item.updated_at] {
+            if let Some(value) = stamp {
+                validate_stamp(Some(value.as_str()))?;
+            }
+        }
+        let id = match item.id.as_deref() {
+            Some(id) if !id.trim().is_empty() => id.trim().to_string(),
+            _ => Uuid::new_v4().to_string(),
+        };
+        if task_ids.contains(&id) {
+            return Err("备份中的任务 ID 重复".into());
+        }
+        let status = match item.status.as_deref() {
+            Some("completed") => "completed".to_string(),
+            Some("in_progress") => "in_progress".to_string(),
+            _ => "pending".to_string(),
+        };
+        let completed_at = if status == "completed" {
+            item.completed_at
+                .clone()
+                .or_else(|| item.updated_at.clone())
+                .or_else(|| Some(now_stamp()))
+        } else {
+            None
+        };
+        let project_id = match item.project_id.as_deref() {
+            Some(id) if !id.trim().is_empty() => {
+                if !project_ids.contains(&id.trim().to_string()) {
+                    return Err(format!(
+                        "备份中的任务「{title}」引用了不存在的项目"
+                    ));
+                }
+                Some(id.trim().to_string())
+            }
+            _ => None,
+        };
+        let stamp = item.created_at.clone().unwrap_or_else(now_stamp);
+        let updated = item.updated_at.clone().unwrap_or_else(|| stamp.clone());
+        task_ids.push(id.clone());
+        task_rows.push(BackupTaskRow {
+            id,
+            title,
+            notes: empty_to_none(item.notes.clone()),
+            status,
+            priority: normalize_priority(item.priority.as_deref().unwrap_or("normal")),
+            kind: normalize_kind(item.kind.as_deref().unwrap_or("quick")),
+            start_at: empty_to_none(item.start_at.clone()),
+            due_at: empty_to_none(item.due_at.clone()),
+            completed_at,
+            project_id,
+            notified: item.notified,
+            sort_order: item.sort_order.max(0),
+            created_at: stamp,
+            updated_at: updated,
+        });
+    }
+
+    // ---- 事务内整体替换 ----
+    let tx = conn.transaction().map_err(to_err)?;
+    tx.execute("DELETE FROM tasks", []).map_err(to_err)?;
+    tx.execute("DELETE FROM projects", []).map_err(to_err)?;
+    for (id, name, color, created_at) in &project_rows {
+        tx.execute(
+            "INSERT INTO projects (id, name, color, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![id, name, color, created_at],
+        )
+        .map_err(to_err)?;
+    }
+    for row in &task_rows {
+        tx.execute(
+            "INSERT INTO tasks (id, title, notes, status, priority, kind, start_at, due_at, completed_at, project_id, notified, sort_order, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                row.id,
+                row.title,
+                row.notes,
+                row.status,
+                row.priority,
+                row.kind,
+                row.start_at,
+                row.due_at,
+                row.completed_at,
+                row.project_id,
+                row.notified,
+                row.sort_order,
+                row.created_at,
+                row.updated_at
+            ],
+        )
+        .map_err(to_err)?;
+    }
+    tx.commit().map_err(to_err)?;
+    Ok((task_rows.len(), project_rows.len()))
 }
 
 fn map_project(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
@@ -602,6 +775,7 @@ fn empty_to_none(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{BackupPayload, BackupProject, BackupTask};
 
     fn memory() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -911,6 +1085,52 @@ mod tests {
     }
 
     #[test]
+    fn in_progress_status_roundtrip() {
+        let conn = memory();
+        let task = insert(
+            &conn,
+            NewTask {
+                due_at: Some("2026-09-09T18:40:00".into()),
+                ..bare_new("任务")
+            },
+        )
+        .unwrap();
+
+        // pending -> in_progress：清除完成时间
+        let started = update(
+            &conn,
+            &task.id,
+            TaskPatch {
+                status: Some("in_progress".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(started.status, "in_progress");
+        assert_eq!(started.completed_at, None);
+
+        // in_progress -> completed
+        let done = complete(&conn, &task.id).unwrap();
+        assert_eq!(done.status, "completed");
+        assert!(done.completed_at.is_some());
+
+        // completed -> in_progress：视为重开，重置提醒
+        mark_notified(&conn, &task.id).unwrap();
+        let restarted = update(
+            &conn,
+            &task.id,
+            TaskPatch {
+                status: Some("in_progress".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(restarted.status, "in_progress");
+        assert_eq!(restarted.completed_at, None);
+        assert!(!restarted.notified);
+    }
+
+    #[test]
     fn migrates_sort_order_for_legacy_db() {
         let dir = std::env::temp_dir().join(format!("todo-legacy-db-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -953,5 +1173,107 @@ mod tests {
         assert!(order_of("b") < order_of("c"));
         drop(conn);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn import_replace_replaces_all_and_validates() {
+        let mut conn = memory();
+        insert_project(&conn, "旧项目", "#123456").unwrap();
+        insert(&conn, bare_new("旧任务")).unwrap();
+
+        let project_id = Uuid::new_v4().to_string();
+        let payload = BackupPayload {
+            version: Some(1),
+            projects: vec![BackupProject {
+                id: Some(project_id.clone()),
+                name: "新项目".into(),
+                color: Some("#EC4899".into()),
+                created_at: None,
+            }],
+            tasks: vec![
+                BackupTask {
+                    id: Some("task-1".into()),
+                    title: "进行中任务".into(),
+                    notes: None,
+                    status: Some("in_progress".into()),
+                    priority: Some("high".into()),
+                    kind: None,
+                    start_at: Some("2026-09-09T09:00:00".into()),
+                    due_at: Some("2026-09-10T18:00:00".into()),
+                    completed_at: None,
+                    project_id: Some(project_id.clone()),
+                    notified: false,
+                    sort_order: 1,
+                    created_at: Some("2026-09-09T08:00:00".into()),
+                    updated_at: None,
+                },
+                BackupTask {
+                    id: None,
+                    title: "已完成任务".into(),
+                    notes: None,
+                    status: Some("completed".into()),
+                    priority: None,
+                    kind: None,
+                    start_at: None,
+                    due_at: None,
+                    completed_at: Some("2026-09-08T10:00:00".into()),
+                    project_id: None,
+                    notified: true,
+                    sort_order: 2,
+                    created_at: None,
+                    updated_at: None,
+                },
+            ],
+        };
+
+        let (tasks, projects) = import_replace(&mut conn, payload).unwrap();
+        assert_eq!((tasks, projects), (2, 1));
+
+        let rows = list(&conn).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(!rows.iter().any(|task| task.title == "旧任务"));
+        assert!(!list_projects(&conn).unwrap().iter().any(|p| p.name == "旧项目"));
+
+        let in_progress = rows.iter().find(|task| task.id == "task-1").unwrap();
+        assert_eq!(in_progress.status, "in_progress");
+        assert_eq!(in_progress.project_id.as_deref(), Some(project_id.as_str()));
+
+        let done = rows.iter().find(|task| task.title == "已完成任务").unwrap();
+        assert_eq!(done.status, "completed");
+        assert!(done.completed_at.is_some());
+        assert_ne!(done.id, ""); // 缺失 ID 时自动补 UUID
+
+        // 非法引用整体拒绝：库里保留原数据
+        let bad = BackupPayload {
+            version: Some(1),
+            projects: vec![],
+            tasks: vec![BackupTask {
+                id: None,
+                title: "孤儿任务".into(),
+                notes: None,
+                status: None,
+                priority: None,
+                kind: None,
+                start_at: None,
+                due_at: None,
+                completed_at: None,
+                project_id: Some("ghost".into()),
+                notified: false,
+                sort_order: 0,
+                created_at: None,
+                updated_at: None,
+            }],
+        };
+        assert!(import_replace(&mut conn, bad).is_err());
+        assert_eq!(list(&conn).unwrap().len(), 2);
+        assert_eq!(list_projects(&conn).unwrap().len(), 1);
+
+        // 版本号不支持时拒绝
+        let future = BackupPayload {
+            version: Some(2),
+            projects: vec![],
+            tasks: vec![],
+        };
+        assert!(import_replace(&mut conn, future).is_err());
     }
 }
