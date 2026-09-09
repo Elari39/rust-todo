@@ -2,8 +2,8 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import {
   CalendarDays,
+  CalendarRange,
   CheckSquare,
-  ChevronLeft,
   GanttChart,
   Pin,
   Settings,
@@ -11,6 +11,7 @@ import {
 } from "lucide-vue-next";
 import type { AppView } from "../types";
 import { useTile } from "../composables/useTile";
+import { t } from "../i18n";
 
 defineProps<{
   current: AppView;
@@ -56,12 +57,12 @@ async function toggleTile() {
 }
 
 const items: { id: AppView; label: string; icon: typeof CalendarDays; count?: "today" | "all" | "projects" }[] = [
-  { id: "today", label: "今日", icon: CalendarDays, count: "today" },
-  { id: "all", label: "全部任务", icon: CheckSquare, count: "all" },
-  { id: "calendar", label: "日历", icon: CalendarDays },
-  { id: "gantt", label: "甘特图", icon: GanttChart },
-  { id: "projects", label: "项目跟踪", icon: SquareKanban, count: "projects" },
-  { id: "settings", label: "设置", icon: Settings },
+  { id: "today", label: t("nav.today"), icon: CalendarRange, count: "today" },
+  { id: "all", label: t("nav.all"), icon: CheckSquare, count: "all" },
+  { id: "calendar", label: t("nav.calendar"), icon: CalendarDays },
+  { id: "gantt", label: t("nav.gantt"), icon: GanttChart },
+  { id: "projects", label: t("nav.projects"), icon: SquareKanban, count: "projects" },
+  { id: "settings", label: t("nav.settings"), icon: Settings },
 ];
 </script>
 
@@ -72,10 +73,8 @@ const items: { id: AppView; label: string; icon: typeof CalendarDays; count?: "t
         <CheckSquare :size="16" />
       </div>
       <div class="brand-name">Todo</div>
-      <ChevronLeft :size="16" style="margin-left: auto; color: #94a3b8" />
     </div>
 
-    <div class="nav-label">工作台</div>
     <nav class="nav-list">
       <button
         v-for="item in items"
@@ -86,7 +85,7 @@ const items: { id: AppView; label: string; icon: typeof CalendarDays; count?: "t
         type="button"
         @click="emit('navigate', item.id)"
       >
-        <component :is="item.icon" :size="16" />
+        <component :is="item.icon" :size="17" />
         <span>{{ item.label }}</span>
         <b
           v-if="item.count === 'today' && todayCount"
@@ -109,11 +108,11 @@ const items: { id: AppView; label: string; icon: typeof CalendarDays; count?: "t
         class="pin-btn"
         :class="{ active: tileOpen }"
         type="button"
-        :title="tileOpen ? '关闭置顶磁贴' : '打开置顶磁贴'"
+        :title="tileOpen ? t('nav.tileOn') : t('nav.tileOff')"
         @click="toggleTile"
       >
         <Pin :size="16" />
-        <span>{{ tileOpen ? "关闭置顶磁贴" : "打开置顶磁贴" }}</span>
+        <span>{{ tileOpen ? t("nav.tileOn") : t("nav.tileOff") }}</span>
       </button>
     </div>
   </aside>

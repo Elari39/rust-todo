@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { ArrowDownUp, Search, X } from "lucide-vue-next";
+import { ArrowDownUp, Plus, X } from "lucide-vue-next";
+import { useCreateModal } from "../composables/useCreateModal";
 import { useProjects } from "../composables/useProjects";
-import type { Task, TaskPatch } from "../types";
+import type { Task, TaskPatch, TaskStatus } from "../types";
 import { parseStamp } from "../utils/datetime";
+import { t, tf } from "../i18n";
 import TaskCard from "./TaskCard.vue";
 import TaskDetail from "./TaskDetail.vue";
 
@@ -11,6 +13,8 @@ const props = defineProps<{
   tasks: Task[];
   selected: Task | null;
   projectId?: string | null;
+  /** 搜索词来自标题栏（App.vue），由 prop 驱动 */
+  query: string;
 }>();
 
 const emit = defineEmits<{
@@ -19,22 +23,28 @@ const emit = defineEmits<{
   reopen: [id: string];
   remove: [id: string];
   save: [id: string, patch: TaskPatch];
+  status: [status: TaskStatus];
   clearProject: [];
   reorder: [orderedIds: string[]];
 }>();
 
 const { projects, load: loadProjects } = useProjects();
-const query = ref("");
-const filter = ref<"all" | "pending" | "completed">("all");
+const { openCreate } = useCreateModal();
+const filter = ref<"all" | "open" | "done">("all");
 const sortMode = ref<"due" | "manual">("due");
-const inputRef = ref<HTMLInputElement | null>(null);
+
+const filterOptions = computed(() => [
+  { value: "all" as const, label: t("all.tabAll") },
+  { value: "open" as const, label: t("all.tabOpen") },
+  { value: "done" as const, label: t("all.tabDone") },
+]);
 
 const project = computed(() =>
   props.projectId ? projects.value.find((item) => item.id === props.projectId) ?? null : null,
 );
 
 const visible = computed(() => {
-  const needle = query.value.trim().toLowerCase();
+  const needle = props.query.trim().toLowerCase();
   const list = props.tasks.filter((task) => {
     const matchQuery =
       !needle ||
@@ -43,8 +53,8 @@ const visible = computed(() => {
     const matchProject = !props.projectId || task.projectId === props.projectId;
     const matchStatus =
       filter.value === "all" ||
-      (filter.value === "pending" && task.status !== "completed") ||
-      (filter.value === "completed" && task.status === "completed");
+      (filter.value === "open" && task.status !== "completed") ||
+      (filter.value === "done" && task.status === "completed");
     return matchQuery && matchProject && matchStatus;
   });
   if (sortMode.value !== "due") return list;
@@ -59,7 +69,11 @@ const visible = computed(() => {
 const dragId = ref<string | null>(null);
 const localOrder = ref<Task[] | null>(null);
 const displayList = computed(() => localOrder.value ?? visible.value);
-const canDrag = computed(() => sortMode.value === "manual" && !query.value.trim());
+const canDrag = computed(() => sortMode.value === "manual" && !props.query.trim());
+
+function toggleSort() {
+  sortMode.value = sortMode.value === "manual" ? "due" : "manual";
+}
 
 function onDragStart(id: string) {
   if (!canDrag.value) return;
@@ -107,17 +121,9 @@ function commitMerged(orderedVisible: Task[]): string[] {
 }
 
 // 搜索/筛选/排序变化会改变可见集，落库刷新会更新 props.tasks：这些时刻都应撤销本地预览
-watch([query, filter, sortMode, () => props.tasks], () => {
+watch([() => props.query, filter, sortMode, () => props.tasks], () => {
   localOrder.value = null;
 });
-
-// Ctrl+K 由 App 全局处理并调用本方法，聚焦搜索框
-function focusSearch() {
-  inputRef.value?.focus();
-  inputRef.value?.select();
-}
-
-defineExpose({ focusSearch });
 
 onMounted(() => {
   // 初次加载失败时进入本视图补拉一次，项目名不再一直显示「未分组」
@@ -127,79 +133,84 @@ onMounted(() => {
 
 <template>
   <section class="workspace">
-    <header class="hero">
-      <p class="kicker">{{ project ? "项目跟踪" : "全部任务" }}</p>
-      <h1>
-        {{ project ? project.name : "所有待办" }}
-        <button
-          v-if="project"
-          class="icon-btn"
-          type="button"
-          title="返回全部任务"
-          @click="emit('clearProject')"
-        >
-          <X :size="14" />
-        </button>
-      </h1>
-      <form class="composer" @submit.prevent>
-        <label class="search-wrap">
-          <Search class="lead-ico" :size="14" />
-          <input
-            ref="inputRef"
-            v-model="query"
-            type="text"
-            placeholder="搜索标题或备注（Ctrl+K）"
-          />
-          <button
-            v-if="query"
-            class="icon-btn clear-btn"
-            type="button"
-            title="清空"
-            @click="query = ''"
-          >
-            <X :size="12" />
-          </button>
-        </label>
-        <button
-          class="btn"
-          :class="sortMode === 'manual' ? 'btn-green' : 'btn-ghost'"
-          type="button"
-          title="切换排序方式"
-          @click="sortMode = sortMode === 'manual' ? 'due' : 'manual'"
-        >
-          <ArrowDownUp :size="14" />
-          {{ sortMode === "manual" ? "手动排序" : "按截止时间" }}
-        </button>
-        <button class="btn" :class="filter === 'all' ? 'btn-green' : 'btn-ghost'" type="button" @click="filter = 'all'">全部</button>
-        <button class="btn" :class="filter === 'pending' ? 'btn-orange' : 'btn-ghost'" type="button" @click="filter = 'pending'">进行中</button>
-        <button class="btn" :class="filter === 'completed' ? 'btn-green' : 'btn-ghost'" type="button" @click="filter = 'completed'">已完成</button>
-      </form>
-      <p v-if="query.trim()" class="kicker">共 {{ visible.length }} 条匹配「{{ query.trim() }}」</p>
-      <p v-else-if="canDrag" class="kicker">拖动卡片调整顺序，切到「按截止时间」恢复时间排序。</p>
-    </header>
     <div class="board" :class="{ solo: !selected }">
-      <div class="task-list">
-        <p v-if="!displayList.length" class="empty">
-          {{ query.trim() ? "没有匹配的任务。" : "这里还空着，先加一条。" }}
+      <div class="page-card">
+        <header class="page-head">
+          <div>
+            <h1 class="page-title">
+              {{ project ? project.name : t("all.title") }}
+            </h1>
+            <p class="page-sub">
+              {{ project ? t("all.projectKicker") : tf("proj.count", { n: tasks.length }) }}
+            </p>
+          </div>
+          <div class="page-actions">
+            <button
+              v-if="project"
+              class="icon-btn"
+              type="button"
+              :title="t('all.backToAll')"
+              @click="emit('clearProject')"
+            >
+              <X :size="14" />
+            </button>
+            <div class="tabs">
+              <button
+                v-for="option in filterOptions"
+                :key="option.value"
+                class="tab"
+                :class="{ on: filter === option.value }"
+                type="button"
+                @click="filter = option.value"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+            <button class="btn btn-ghost" type="button" :title="t('all.sortTip')" @click="toggleSort">
+              <ArrowDownUp :size="14" />
+              {{ sortMode === "manual" ? t("all.sortManual") : t("all.sortDue") }}
+            </button>
+            <button class="btn btn-primary" type="button" @click="openCreate()">
+              <Plus :size="15" />
+              {{ t("common.createTask") }}
+            </button>
+          </div>
+        </header>
+
+        <p v-if="query.trim()" class="kicker-hint">
+          {{ tf("all.matchCount", { n: visible.length, q: query.trim() }) }}
         </p>
-        <div
-          v-for="task in displayList"
-          :key="task.id"
-          class="task-slot"
-          :class="{ dragging: dragId === task.id }"
-          :draggable="canDrag"
-          @dragstart="onDragStart(task.id)"
-          @dragover.prevent="onDragOver($event, task.id)"
-          @dragend="onDragEnd"
-          @drop.prevent
-        >
-          <TaskCard
-            :task="task"
-            :active="selected?.id === task.id"
-            @select="emit('select', task.id)"
-          />
+        <p v-else-if="canDrag" class="kicker-hint">{{ t("all.dragHint") }}</p>
+
+        <div class="task-list page-scroll">
+          <p v-if="!displayList.length" class="empty">
+            {{ query.trim() ? t("all.empty") : t("all.emptyAll") }}
+          </p>
+          <div
+            v-for="task in displayList"
+            :key="task.id"
+            class="task-slot"
+            :class="{ dragging: dragId === task.id }"
+            :draggable="canDrag"
+            @dragstart="onDragStart(task.id)"
+            @dragover.prevent="onDragOver($event, task.id)"
+            @dragend="onDragEnd"
+            @drop.prevent
+          >
+            <TaskCard
+              :task="task"
+              :active="selected?.id === task.id"
+              @select="emit('select', task.id)"
+              @toggle="
+                task.status === 'completed'
+                  ? emit('reopen', task.id)
+                  : emit('complete', task.id)
+              "
+            />
+          </div>
         </div>
       </div>
+
       <TaskDetail
         v-if="selected"
         :task="selected"
@@ -208,6 +219,7 @@ onMounted(() => {
         @reopen="emit('reopen', selected.id)"
         @remove="emit('remove', selected.id)"
         @save="(patch) => selected && emit('save', selected.id, patch)"
+        @status="(status) => emit('status', status)"
       />
     </div>
   </section>

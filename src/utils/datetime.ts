@@ -1,6 +1,7 @@
 import type { Task } from "../types";
 
 const WEEKDAYS = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+const WEEKDAYS_SHORT = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
 export function pad(value: number): string {
   return String(value).padStart(2, "0");
@@ -55,6 +56,22 @@ export function formatRange(start?: string | null, end?: string | null): string 
 
 export function weekdayName(date: Date): string {
   return WEEKDAYS[date.getDay()];
+}
+
+export function weekdayShort(date: Date): string {
+  return WEEKDAYS_SHORT[date.getDay()];
+}
+
+/** 「2026年9月9日」 */
+export function formatFullDate(date: Date): string {
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
+/** 「9月9日 09:00」，任务行右侧的紧凑时间展示 */
+export function formatShortStamp(value?: string | null): string {
+  const date = parseStamp(value);
+  if (!date) return "未设置时间";
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${formatClock(date)}`;
 }
 
 export function startOfDay(date: Date): Date {
@@ -127,7 +144,8 @@ export function nearestDue(tasks: Task[]): Date | null {
 export function monthMatrix(anchor: Date): Date[][] {
   const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
   const start = new Date(first);
-  start.setDate(1 - first.getDay());
+  // 周一为一周起点（与设计图一致）：周日落到当周最后一位
+  start.setDate(1 - ((first.getDay() + 6) % 7));
   const weeks: Date[][] = [];
   for (let week = 0; week < 6; week += 1) {
     const row: Date[] = [];

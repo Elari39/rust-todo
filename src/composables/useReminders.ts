@@ -7,6 +7,7 @@ import {
 import type { Task } from "../types";
 import { parseStamp } from "../utils/datetime";
 import { isDueForNotification } from "../utils/reminders";
+import { t, tf } from "../i18n";
 
 const SCAN_INTERVAL_MS = 30_000;
 
@@ -49,8 +50,8 @@ export function useReminders(
         const overdue = due.getTime() < nowMs;
         try {
           await sendNotification({
-            title: overdue ? "任务已到期" : "任务即将到期",
-            body: `${task.title} · ${overdue ? "已经过截止时间" : `${leadMinutes.value} 分钟内到期`}`,
+            title: overdue ? t("notify.overdueTitle") : t("notify.dueSoonTitle"),
+            body: `${task.title} · ${overdue ? t("notify.overdueBody") : tf("notify.soonBody", { n: leadMinutes.value })}`,
           });
           dueIds.push(task.id);
         } catch {

@@ -136,14 +136,15 @@ describe("startOfDay / dueLabel", () => {
 });
 
 describe("monthMatrix", () => {
-  it("固定输出 6 行 7 列，从当月第一周周日起", () => {
+  it("固定输出 6 行 7 列，从当月第一周周一起", () => {
     const weeks = monthMatrix(new Date(2026, 8, 9));
     expect(weeks).toHaveLength(6);
     for (const week of weeks) {
       expect(week).toHaveLength(7);
-      expect(week[0].getDay()).toBe(0);
+      expect(week[0].getDay()).toBe(1);
     }
-    const first = new Date(2026, 8, 1 - new Date(2026, 8, 1).getDay());
+    const offset = (new Date(2026, 8, 1).getDay() + 6) % 7;
+    const first = new Date(2026, 8, 1 - offset);
     expect(weeks[0][0].getTime()).toBe(first.getTime());
   });
 });

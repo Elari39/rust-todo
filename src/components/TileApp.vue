@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
-import { Check, Plus, X } from "lucide-vue-next";
+import { Check, Pin, Plus, X } from "lucide-vue-next";
 import { useClock } from "../composables/useClock";
 import { useTasks } from "../composables/useTasks";
+import { t } from "../i18n";
 import {
   defaultDue,
   dueLabel,
@@ -189,17 +190,20 @@ async function toggle(id: string, done: boolean) {
     @pointercancel="onTilePointerUp"
   >
     <header class="tile-head">
-      <b>今日待办</b>
+      <span class="tile-pin"><Pin :size="13" /></span>
+      <b>{{ t("tile.title") }}</b>
       <span class="tile-count">{{ openCount }}</span>
-      <button class="tile-close" type="button" title="关闭磁贴" @click="win.close()">
+      <button class="tile-close" type="button" :title="t('tile.close')" @click="win.close()">
         <X :size="14" />
       </button>
     </header>
 
     <p v-if="error" class="tile-error">{{ error }}</p>
 
+    <p class="tile-section">{{ t("tile.section") }}</p>
+
     <TransitionGroup tag="ul" name="tile" class="tile-list">
-      <li v-if="!visibleTasks.length" key="empty" class="tile-empty">今天没有待办，休息一下。</li>
+      <li v-if="!visibleTasks.length" key="empty" class="tile-empty">{{ t("tile.empty") }}</li>
       <li
         v-for="task in visibleTasks"
         :key="task.id"
@@ -209,7 +213,7 @@ async function toggle(id: string, done: boolean) {
         <button
           class="tile-check"
           type="button"
-          title="切换完成"
+          :title="t('tile.check')"
           @click="toggle(task.id, task.status === 'completed')"
         >
           <Check :size="12" />
@@ -226,7 +230,7 @@ async function toggle(id: string, done: boolean) {
 
     <form class="tile-add" @submit.prevent="add">
       <Plus :size="14" />
-      <input v-model="draft" type="text" placeholder="快速记一条，回车添加" />
+      <input v-model="draft" type="text" :placeholder="t('tile.addPlaceholder')" />
     </form>
   </div>
 </template>
@@ -236,10 +240,10 @@ async function toggle(id: string, done: boolean) {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--panel);
+  background: #ffffff;
   border-radius: 18px;
   overflow: hidden;
-  box-shadow: 0 12px 32px rgba(48, 42, 30, 0.18);
+  box-shadow: 0 12px 32px rgba(46, 74, 134, 0.25);
   user-select: none;
 }
 
@@ -248,8 +252,19 @@ async function toggle(id: string, done: boolean) {
   align-items: center;
   gap: 8px;
   padding: 12px 14px;
-  background: var(--card);
+  border-bottom: 1px solid #eef1f9;
   user-select: none;
+}
+
+.tile-pin {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
 }
 
 .tile-head b {
@@ -289,15 +304,23 @@ async function toggle(id: string, done: boolean) {
   margin: 8px 12px 0;
   padding: 6px 10px;
   border-radius: 10px;
-  background: #fee2e2;
+  background: #fde8e8;
   color: #991b1b;
   font-size: 12px;
+}
+
+.tile-section {
+  margin: 10px 14px 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .tile-list {
   list-style: none;
   margin: 0;
-  padding: 10px 12px;
+  padding: 8px 12px;
   flex: 1;
   overflow: auto;
   display: flex;
@@ -316,10 +339,14 @@ async function toggle(id: string, done: boolean) {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  background: var(--card);
+  background: #f6f8fd;
+  border: 1px solid #eef1f9;
   border-radius: 12px;
   padding: 10px;
-  box-shadow: var(--shadow);
+}
+
+.tile-item.done {
+  opacity: 0.75;
 }
 
 .tile-item.done .tile-title {
@@ -332,12 +359,13 @@ async function toggle(id: string, done: boolean) {
   height: 18px;
   flex: 0 0 auto;
   margin-top: 1px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
+  border: 2px solid #c2cee6;
+  border-radius: 50%;
   background: #fff;
   color: transparent;
   display: grid;
   place-items: center;
+  padding: 0;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
@@ -420,7 +448,8 @@ async function toggle(id: string, done: boolean) {
   margin: 0 12px 12px;
   padding: 8px 10px;
   border-radius: 12px;
-  background: var(--card);
+  border: 1px solid #eef1f9;
+  background: #f6f8fd;
   color: var(--muted);
 }
 

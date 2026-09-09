@@ -1,19 +1,30 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { ChevronLeft, ChevronRight } from "lucide-vue-next";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-vue-next";
+import { useCreateModal } from "../composables/useCreateModal";
+import { useProjects } from "../composables/useProjects";
+import { useTasks } from "../composables/useTasks";
 import type { Task } from "../types";
-import { isSameDay, monthMatrix, parseStamp } from "../utils/datetime";
+import { isSameDay, monthMatrix, parseStamp, toStamp } from "../utils/datetime";
+import { t, tf } from "../i18n";
+import TaskCard from "./TaskCard.vue";
 
 const props = defineProps<{
   now: Date;
   tasks: Task[];
 }>();
 
-const MAX_SHOWN = 3;
-const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+const MAX_DOTS = 4;
+const weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+const { projectMap } = useProjects();
+const { complete, reopen } = useTasks();
+const { openCreate } = useCreateModal();
 
 // 本地月份锚点：支持前后翻月查看，初始为当前月
 const anchor = ref(new Date(props.now));
+const selectedDay = ref(new Date(props.now));
+
 const monthLabel = computed(
   () => `${anchor.value.getFullYear()} 年 ${anchor.value.getMonth() + 1} 月`,
 );
@@ -22,7 +33,12 @@ function shiftMonth(delta: number) {
   anchor.value = new Date(anchor.value.getFullYear(), anchor.value.getMonth() + delta, 1);
 }
 
-// 42 个格子放进同一个 7 列网格：各列宽度全局一致，不会因某行的长事件把列撑歪
+function goToday() {
+  anchor.value = new Date(props.now);
+  selectedDay.value = new Date(props.now);
+}
+
+// 42 个格子放进同一个 7 列网格：各列宽度全局一致
 const days = computed(() => monthMatrix(anchor.value).flat());
 
 // 按日索引一次建好：避免每个格子渲染时都对全量任务过滤两次
@@ -54,71 +70,108 @@ function dayKey(day: Date): string {
 function eventsOn(day: Date): Task[] {
   return eventsByDay.value.get(dayKey(day)) ?? [];
 }
+
+/** 格子里只画事件色点：项目色，未分组用灰色 */
+function dotsFor(day: Date): string[] {
+  return eventsOn(day)
+    .slice(0, MAX_DOTS)
+    .map((task) => (task.projectId ? projectMap.value[task.projectId]?.color : undefined) ?? "#94a3b8");
+}
+
+const dayTitle = computed(() => {
+  const params = { m: selectedDay.value.getMonth() + 1, d: selectedDay.value.getDate() };
+  return isSameDay(selectedDay.value, props.now)
+    ? tf("cal.dayHeaderToday", params)
+    : tf("cal.dayHeader", params);
+});
+
+const dayTasks = computed(() => eventsOn(selectedDay.value));
+
+function createForDay() {
+  const date = new Date(selectedDay.value);
+  date.setHours(18, 40, 0, 0);
+  openCreate({ dueAt: toStamp(date) });
+}
+
+function toggleTask(task: Task) {
+  if (task.status === "completed") void reopen(task.id);
+  else void complete(task.id);
+}
 </script>
 
 <template>
   <section class="workspace">
-    <header class="hero">
-      <p class="kicker">日历</p>
-      <h1>
-        {{ monthLabel }}
-        <span class="month-nav">
-          <button class="icon-btn" type="button" title="上个月" @click="shiftMonth(-1)">
-            <ChevronLeft :size="16" />
-          </button>
-          <button class="btn btn-ghost" type="button" @click="anchor = new Date(props.now)">
-            本月
-          </button>
-          <button class="icon-btn" type="button" title="下个月" @click="shiftMonth(1)">
-            <ChevronRight :size="16" />
-          </button>
-        </span>
-      </h1>
-    </header>
-    <div class="panel">
-      <div class="month-grid month-head">
-        <strong v-for="day in weekdays" :key="day">{{ day }}</strong>
-      </div>
-      <div class="month-grid">
-        <div
-          v-for="day in days"
-          :key="day.getTime()"
-          class="month-cell"
-          :class="{
-            muted: day.getMonth() !== anchor.getMonth(),
-            today: isSameDay(day, now),
-          }"
-          tabindex="0"
-          :aria-label="`${day.getFullYear()}年${day.getMonth() + 1}月${day.getDate()}日，${eventsOn(day).length} 项日程`"
-        >
-          <b>{{ day.getDate() }}</b>
-          <div
-            v-for="task in eventsOn(day).slice(0, MAX_SHOWN)"
-            :key="task.id"
-            class="event"
-          >
-            {{ task.title }}
+    <div class="board solo">
+      <div class="page-card">
+        <header class="page-head">
+          <div class="page-head-main">
+            <button class="icon-btn" type="button" :title="t('cal.prev')" @click="shiftMonth(-1)">
+              <ChevronLeft :size="16" />
+            </button>
+            <h1 class="page-title">{{ monthLabel }}</h1>
+            <button class="icon-btn" type="button" :title="t('cal.next')" @click="shiftMonth(1)">
+              <ChevronRight :size="16" />
+            </button>
           </div>
-          <span v-if="eventsOn(day).length > MAX_SHOWN" class="month-more">
-            +{{ eventsOn(day).length - MAX_SHOWN }} 更多
-          </span>
+          <button class="btn btn-ghost" type="button" @click="goToday">
+            {{ t("cal.todayBtn") }}
+          </button>
+        </header>
+
+        <div class="cal-layout">
+          <div class="cal-main">
+            <div class="cal-weekdays">
+              <span v-for="day in weekdays" :key="day">{{ day }}</span>
+            </div>
+
+            <div class="cal-grid">
+              <button
+                v-for="day in days"
+                :key="day.getTime()"
+                class="cal-cell"
+                :class="{
+                  muted: day.getMonth() !== anchor.getMonth(),
+                  today: isSameDay(day, now),
+                  selected: isSameDay(day, selectedDay),
+                }"
+                type="button"
+                :aria-label="`${day.getFullYear()}年${day.getMonth() + 1}月${day.getDate()}日，${eventsOn(day).length} 项日程`"
+                @click="selectedDay = day"
+              >
+                <span class="cal-daynum">{{ day.getDate() }}</span>
+                <span class="cal-dots">
+                  <i
+                    v-for="(color, index) in dotsFor(day)"
+                    :key="index"
+                    class="cal-dot"
+                    :style="{ background: color }"
+                  />
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <aside class="day-panel">
+            <div class="day-panel-head">
+              <b>{{ dayTitle }}</b>
+              <button class="btn btn-primary btn-sm" type="button" @click="createForDay">
+                <Plus :size="14" />
+                {{ t("common.createTask") }}
+              </button>
+            </div>
+            <div class="day-list">
+              <p v-if="!dayTasks.length" class="empty-sm">{{ t("cal.emptyDay") }}</p>
+              <TaskCard
+                v-for="task in dayTasks"
+                :key="task.id"
+                :task="task"
+                :active="false"
+                @toggle="toggleTask(task)"
+              />
+            </div>
+          </aside>
         </div>
       </div>
     </div>
   </section>
 </template>
-
-<style scoped>
-.month-nav {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 12px;
-  vertical-align: middle;
-}
-
-.month-cell:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
-}
-</style>

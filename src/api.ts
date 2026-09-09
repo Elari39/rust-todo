@@ -27,4 +27,5 @@ export const api = {
   tileState: () => invoke<boolean>("tile_state"),
   dataDir: () => invoke<string>("data_dir"),
   exportBackup: () => invoke<string>("export_backup"),
+  importBackup: (path: string) => invoke<string>("import_backup", { path }),
 };

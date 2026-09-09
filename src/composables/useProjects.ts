@@ -1,6 +1,7 @@
 import { computed, ref } from "vue";
 import { api } from "../api";
 import type { Project } from "../types";
+import { t } from "../i18n";
 
 // 模块级单例：主窗口内任意组件共享同一份项目数据
 const projects = ref<Project[]>([]);
@@ -63,8 +64,8 @@ export function useProjects() {
   });
 
   function nameOf(id: string | null): string {
-    if (!id) return "未分组";
-    return projectMap.value[id]?.name ?? "未分组";
+    if (!id) return t("common.ungrouped");
+    return projectMap.value[id]?.name ?? t("common.ungrouped");
   }
 
   return { projects, projectMap, loading, error, load, refresh, create, update, remove, nameOf };

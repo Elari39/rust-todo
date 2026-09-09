@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Sidebar from "./components/Sidebar.vue";
+import TitleBar from "./components/TitleBar.vue";
 import TodayView from "./components/TodayView.vue";
 import AllTasksView from "./components/AllTasksView.vue";
 import CalendarView from "./components/CalendarView.vue";
@@ -9,12 +10,13 @@ import GanttView from "./components/GanttView.vue";
 import ProjectsView from "./components/ProjectsView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import TileApp from "./components/TileApp.vue";
+import TaskCreateModal from "./components/TaskCreateModal.vue";
 import { useClock } from "./composables/useClock";
 import { useProjects } from "./composables/useProjects";
 import { useReminders } from "./composables/useReminders";
 import { useSettings } from "./composables/useSettings";
 import { useTasks } from "./composables/useTasks";
-import type { AppView, TaskKind } from "./types";
+import type { AppView, TaskKind, TaskStatus } from "./types";
 import { toStamp } from "./utils/datetime";
 
 // 置顶磁贴是第二个窗口，加载同一份前端，按窗口 label 切换 UI
@@ -48,7 +50,13 @@ if (!isTile) {
 const view = ref<AppView>("today");
 const activeProjectId = ref<string | null>(null);
 const now = useClock();
-const allView = ref<InstanceType<typeof AllTasksView> | null>(null);
+const titleBarRef = ref<InstanceType<typeof TitleBar> | null>(null);
+
+// 标题栏全局搜索：输入即进入「全部任务」并按内容过滤
+const searchQuery = ref("");
+watch(searchQuery, (value) => {
+  if (value.trim() && view.value !== "all") navigate("all");
+});
 
 onMounted(() => {
   window.addEventListener("keydown", onGlobalKeydown);
@@ -63,12 +71,12 @@ onUnmounted(() => {
   window.removeEventListener("keydown", onGlobalKeydown);
 });
 
-// Ctrl+K 全局搜索入口：任何视图都能跳到「全部任务」并聚焦搜索框
+// Ctrl+K 全局搜索入口：任何视图都能跳到「全部任务」并聚焦标题栏搜索框
 function onGlobalKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
     navigate("all");
-    void nextTick(() => allView.value?.focusSearch());
+    void nextTick(() => titleBarRef.value?.focusSearch());
   }
 }
 
@@ -91,71 +99,83 @@ function openProject(id: string) {
   activeProjectId.value = id;
   view.value = "all";
 }
+
+/** 任务详情里的状态流转：开始任务 / 标记未开始 */
+function setStatus(status: TaskStatus) {
+  if (selected.value) void update(selected.value.id, { status });
+}
 </script>
 
 <template>
   <TileApp v-if="isTile" />
 
-  <div v-else class="app-shell">
-    <Sidebar
-      :current="view"
-      :today-count="todayCount"
-      :all-count="pending.length"
-      :project-count="projects.length"
-      @navigate="navigate"
-    />
+  <template v-else>
+    <TitleBar ref="titleBarRef" v-model="searchQuery" />
 
-    <div class="content-col">
-      <div v-if="error" class="error-banner" role="alert">{{ error }}</div>
-
-      <TodayView
-        v-if="view === 'today'"
-        :now="now"
-        :tasks="todayTasks"
-        :selected="selected"
-        :all-pending="pending.length"
-        :on-create="createQuick"
-        @select="select"
-        @complete="complete"
-        @reopen="reopen"
-        @remove="remove"
-        @save="update"
+    <div class="app-shell">
+      <Sidebar
+        :current="view"
+        :today-count="todayCount"
+        :all-count="pending.length"
+        :project-count="projects.length"
+        @navigate="navigate"
       />
 
-      <AllTasksView
-        v-else-if="view === 'all'"
-        ref="allView"
-        :tasks="tasks"
-        :selected="selected"
-        :project-id="activeProjectId"
-        @select="select"
-        @complete="complete"
-        @reopen="reopen"
-        @remove="remove"
-        @save="update"
-        @clear-project="activeProjectId = null"
-        @reorder="reorder"
-      />
+      <div class="content-col">
+        <div v-if="error" class="error-banner" role="alert">{{ error }}</div>
 
-      <CalendarView
-        v-else-if="view === 'calendar'"
-        :now="now"
-        :tasks="tasks"
-      />
+        <TodayView
+          v-if="view === 'today'"
+          :now="now"
+          :tasks="todayTasks"
+          :selected="selected"
+          :on-create="createQuick"
+          @select="select"
+          @complete="complete"
+          @reopen="reopen"
+          @remove="remove"
+          @save="update"
+          @status="setStatus"
+        />
 
-      <GanttView
-        v-else-if="view === 'gantt'"
-        :now="now"
-        :tasks="tasks"
-      />
+        <AllTasksView
+          v-else-if="view === 'all'"
+          :tasks="tasks"
+          :selected="selected"
+          :project-id="activeProjectId"
+          :query="searchQuery"
+          @select="select"
+          @complete="complete"
+          @reopen="reopen"
+          @remove="remove"
+          @save="update"
+          @status="setStatus"
+          @clear-project="activeProjectId = null"
+          @reorder="reorder"
+        />
 
-      <ProjectsView
-        v-else-if="view === 'projects'"
-        :tasks="tasks"
-        @open="openProject"
-      />
+        <CalendarView
+          v-else-if="view === 'calendar'"
+          :now="now"
+          :tasks="tasks"
+        />
 
-      <SettingsView v-else />
+        <GanttView
+          v-else-if="view === 'gantt'"
+          :now="now"
+          :tasks="tasks"
+        />
+
+        <ProjectsView
+          v-else-if="view === 'projects'"
+          :tasks="tasks"
+          @open="openProject"
+        />
+
+        <SettingsView v-else />
+      </div>
     </div>
-  </div>
+
+    <TaskCreateModal />
+  </template>
 </template>

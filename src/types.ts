@@ -1,4 +1,4 @@
-export type TaskStatus = "pending" | "completed";
+export type TaskStatus = "pending" | "in_progress" | "completed";
 export type TaskPriority = "low" | "normal" | "high";
 export type TaskKind = "quick" | "detailed";
 export type AppView =
@@ -36,6 +36,7 @@ export interface Project {
 export interface AppSettings {
   notificationLeadMinutes: number;
   closeToTray: boolean;
+  locale: string;
 }
 
 export interface NewTask {
