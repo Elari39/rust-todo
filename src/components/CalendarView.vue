@@ -8,8 +8,11 @@ const props = defineProps<{
   tasks: Task[];
 }>();
 
-const weeks = computed(() => monthMatrix(props.now));
+const MAX_SHOWN = 3;
 const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+
+// 42 个格子放进同一个 7 列网格：各列宽度全局一致，不会因某行的长事件把列撑歪
+const days = computed(() => monthMatrix(props.now).flat());
 
 function eventsOn(day: Date) {
   return props.tasks.filter((task) => {
@@ -27,13 +30,13 @@ function eventsOn(day: Date) {
       <h1>{{ now.getFullYear() }} 年 {{ now.getMonth() + 1 }} 月</h1>
     </header>
     <div class="panel">
-      <div class="month-grid" style="margin-bottom: 8px">
-        <strong v-for="day in weekdays" :key="day" style="text-align:center;color:#64748b">{{ day }}</strong>
+      <div class="month-grid month-head">
+        <strong v-for="day in weekdays" :key="day">{{ day }}</strong>
       </div>
-      <div v-for="(week, index) in weeks" :key="index" class="month-grid">
+      <div class="month-grid">
         <div
-          v-for="day in week"
-          :key="day.toISOString()"
+          v-for="day in days"
+          :key="day.getTime()"
           class="month-cell"
           :class="{
             muted: day.getMonth() !== now.getMonth(),
@@ -42,12 +45,15 @@ function eventsOn(day: Date) {
         >
           <b>{{ day.getDate() }}</b>
           <div
-            v-for="task in eventsOn(day).slice(0, 3)"
+            v-for="task in eventsOn(day).slice(0, MAX_SHOWN)"
             :key="task.id"
             class="event"
           >
             {{ task.title }}
           </div>
+          <span v-if="eventsOn(day).length > MAX_SHOWN" class="month-more">
+            +{{ eventsOn(day).length - MAX_SHOWN }} 更多
+          </span>
         </div>
       </div>
     </div>

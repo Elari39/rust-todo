@@ -34,12 +34,20 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 pub fn open(path: &std::path::Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(to_err)?;
     let projects_fresh = !table_exists(&conn, "projects")?;
+    let tasks_fresh = !table_exists(&conn, "tasks")?;
     conn.execute_batch(SCHEMA).map_err(to_err)?;
     ensure_sort_order(&conn)?;
-    if projects_fresh {
-        seed_projects(&conn)?;
+    // 只在新建库时写入示例数据；老库即使任务被用户清空也不再复活种子
+    if projects_fresh || tasks_fresh {
+        let tx = conn.unchecked_transaction().map_err(to_err)?;
+        if projects_fresh {
+            seed_projects(&tx)?;
+        }
+        if tasks_fresh {
+            seed_tasks(&tx)?;
+        }
+        tx.commit().map_err(to_err)?;
     }
-    seed_tasks(&conn)?;
     Ok(conn)
 }
 
@@ -90,6 +98,23 @@ fn project_id_by_name(conn: &Connection, name: &str) -> Option<String> {
         row.get(0)
     })
     .ok()
+}
+
+fn ensure_project_exists(conn: &Connection, project_id: Option<&str>) -> Result<(), String> {
+    let Some(id) = project_id else {
+        return Ok(());
+    };
+    let found: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM projects WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .map_err(to_err)?;
+    if found == 0 {
+        return Err("项目不存在".into());
+    }
+    Ok(())
 }
 
 fn seed_tasks(conn: &Connection) -> Result<(), String> {
@@ -232,6 +257,7 @@ pub fn insert(conn: &Connection, input: NewTask) -> Result<Task, String> {
     if title.is_empty() {
         return Err("标题不能为空".into());
     }
+    ensure_project_exists(conn, input.project_id.as_deref())?;
     let id = Uuid::new_v4().to_string();
     let stamp = now_stamp();
     let priority = normalize_priority(input.priority.as_deref().unwrap_or("normal"));
@@ -242,7 +268,7 @@ pub fn insert(conn: &Connection, input: NewTask) -> Result<Task, String> {
         params![
             id,
             title,
-            input.notes,
+            empty_to_none(input.notes),
             priority,
             kind,
             empty_to_none(input.start_at),
@@ -265,8 +291,14 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
         return Err("标题不能为空".into());
     }
     let notes = match patch.notes {
-        Some(value) if value.trim().is_empty() => None,
-        Some(value) => Some(value),
+        Some(value) => {
+            let trimmed = value.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        }
         None => current.notes,
     };
     let priority = patch
@@ -287,15 +319,26 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
         Some(value) => empty_to_none(Some(value)),
         None => current.due_at,
     };
+    // 只校验显式传入的 project_id；存量数据里的孤儿引用不阻塞后续编辑
+    if let Some(value) = patch.project_id.as_deref() {
+        if !value.trim().is_empty() {
+            ensure_project_exists(conn, Some(value))?;
+        }
+    }
     let project_id = match patch.project_id {
         Some(value) if value.trim().is_empty() => None,
         Some(value) => Some(value),
         None => current.project_id,
     };
     let (status, completed_at) = match patch.status.as_deref() {
+        // 已完成的任务再次标记完成时保留首次完成时间
+        Some("completed") if current.status == "completed" => {
+            (current.status.clone(), current.completed_at.clone())
+        }
         Some("completed") => ("completed".to_string(), Some(now_stamp())),
         Some("pending") => ("pending".to_string(), None),
-        _ => (current.status, current.completed_at),
+        Some(_) => return Err("无效的任务状态".into()),
+        None => (current.status, current.completed_at),
     };
     let stamp = now_stamp();
     conn.execute(
@@ -588,5 +631,112 @@ mod tests {
         delete_project(&conn, &project.id).unwrap();
         assert!(list_projects(&conn).unwrap().is_empty());
         assert_eq!(get(&conn, &task.id).unwrap().project_id, None);
+    }
+
+    fn bare_new(title: &str) -> NewTask {
+        NewTask {
+            title: title.into(),
+            notes: None,
+            priority: None,
+            kind: None,
+            start_at: None,
+            due_at: None,
+            project_id: None,
+        }
+    }
+
+    #[test]
+    fn seeds_only_on_fresh_database() {
+        let dir = std::env::temp_dir().join(format!("todo-db-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("todo.db");
+
+        let conn = open(&db_path).unwrap();
+        assert!(!list(&conn).unwrap().is_empty());
+        for task in list(&conn).unwrap() {
+            delete(&conn, &task.id).unwrap();
+        }
+        assert!(list(&conn).unwrap().is_empty());
+        drop(conn);
+
+        // 用户清空任务后重启，示例数据不应复活
+        let reopened = open(&db_path).unwrap();
+        assert!(list(&reopened).unwrap().is_empty());
+        drop(reopened);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reject_invalid_status() {
+        let conn = memory();
+        let task = insert(&conn, bare_new("任务")).unwrap();
+        let err = update(
+            &conn,
+            &task.id,
+            TaskPatch {
+                status: Some("archive".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, "无效的任务状态");
+    }
+
+    #[test]
+    fn recomplete_preserves_completed_at() {
+        let conn = memory();
+        let task = insert(&conn, bare_new("任务")).unwrap();
+        let first = complete(&conn, &task.id).unwrap();
+        let first_at = first.completed_at.clone().unwrap();
+        let second = complete(&conn, &task.id).unwrap();
+        assert_eq!(second.completed_at.unwrap(), first_at);
+
+        let reopened = update(
+            &conn,
+            &task.id,
+            TaskPatch {
+                status: Some("pending".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(reopened.completed_at, None);
+    }
+
+    #[test]
+    fn reject_unknown_project() {
+        let conn = memory();
+        let err = insert(
+            &conn,
+            NewTask {
+                project_id: Some("not-a-project".into()),
+                ..bare_new("任务")
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, "项目不存在");
+
+        let project = insert_project(&conn, "工作", "#3D5BDB").unwrap();
+        let task = insert(&conn, bare_new("任务")).unwrap();
+        let err = update(
+            &conn,
+            &task.id,
+            TaskPatch {
+                project_id: Some("not-a-project".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, "项目不存在");
+        let assigned = update(
+            &conn,
+            &task.id,
+            TaskPatch {
+                project_id: Some(project.id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(assigned.project_id, Some(project.id));
     }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ArrowDownUp, Search, X } from "lucide-vue-next";
 import { useProjects } from "../composables/useProjects";
 import type { Task, TaskPatch } from "../types";
@@ -86,27 +86,30 @@ function onDragEnd() {
   if (localOrder.value) {
     emit("reorder", commitMerged(localOrder.value));
   }
-  localOrder.value = null;
+  // 本地预览保留到落库刷新（props.tasks 更新）后再撤销，避免列表回闪旧顺序
   dragId.value = null;
 }
 
-/** 只重排当前可见任务，隐藏任务保持原相对位置插回两端 */
+/** 只重排当前可见任务：按原序遍历，可见任务依次用新顺序替换，隐藏任务原地保留 */
 function commitMerged(orderedVisible: Task[]): string[] {
   const visibleIds = new Set(orderedVisible.map((task) => task.id));
   const merged: string[] = [];
-  let inserted = false;
+  let cursor = 0;
   for (const task of props.tasks) {
     if (visibleIds.has(task.id)) {
-      if (!inserted) {
-        merged.push(...orderedVisible.map((item) => item.id));
-        inserted = true;
-      }
+      const next = orderedVisible[cursor++];
+      if (next) merged.push(next.id);
     } else {
       merged.push(task.id);
     }
   }
   return merged;
 }
+
+// 搜索/筛选/排序变化会改变可见集，落库刷新会更新 props.tasks：这些时刻都应撤销本地预览
+watch([query, filter, sortMode, () => props.tasks], () => {
+  localOrder.value = null;
+});
 
 function onKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -167,7 +170,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
         </button>
         <button class="btn" :class="filter === 'all' ? 'btn-green' : 'btn-ghost'" type="button" @click="filter = 'all'">全部</button>
         <button class="btn" :class="filter === 'pending' ? 'btn-orange' : 'btn-ghost'" type="button" @click="filter = 'pending'">进行中</button>
-        <button class="btn btn-ghost" type="button" @click="filter = 'completed'">已完成</button>
+        <button class="btn" :class="filter === 'completed' ? 'btn-green' : 'btn-ghost'" type="button" @click="filter = 'completed'">已完成</button>
       </form>
       <p v-if="query.trim()" class="kicker">共 {{ visible.length }} 条匹配「{{ query.trim() }}」</p>
       <p v-else-if="canDrag" class="kicker">拖动卡片调整顺序，切到「按截止时间」恢复时间排序。</p>

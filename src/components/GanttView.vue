@@ -13,19 +13,22 @@ const horizon = 14;
 const rows = computed(() => {
   const origin = startOfDay(props.now).getTime();
   const end = origin + horizon * 86400000;
-  return props.tasks
-    .filter((task) => task.startAt || task.dueAt)
-    .map((task) => {
-      const start = parseStamp(task.startAt)?.getTime() ?? origin;
-      const due = parseStamp(task.dueAt)?.getTime() ?? start + 86400000;
-      const left = Math.max(0, ((start - origin) / (end - origin)) * 100);
-      const right = Math.min(100, ((due - origin) / (end - origin)) * 100);
-      return {
-        task,
-        left,
-        width: Math.max(4, right - left),
-      };
-    });
+  const span = end - origin;
+  const result: { task: Task; left: number; width: number }[] = [];
+  for (const task of props.tasks) {
+    if (!task.startAt && !task.dueAt) continue;
+    const start = parseStamp(task.startAt)?.getTime() ?? origin;
+    let due = parseStamp(task.dueAt)?.getTime() ?? start + 86400000;
+    // 截止早于开始的倒置区间按同日处理，避免画出反向条
+    if (due < start) due = start;
+    // 只保留与「未来 horizon 天」窗口有交集的任务，窗口外任务不画
+    if (due <= origin || start >= end) continue;
+
+    const left = Math.max(0, ((start - origin) / span) * 100);
+    const right = Math.min(100, ((due - origin) / span) * 100);
+    result.push({ task, left, width: Math.min(Math.max(4, right - left), 100 - left) });
+  }
+  return result;
 });
 </script>
 

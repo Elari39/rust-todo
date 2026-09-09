@@ -17,6 +17,7 @@ export function useReminders(
 ) {
   let timer: number | null = null;
   let permissionGranted: boolean | null = null;
+  let scanning = false;
 
   async function ensurePermission(): Promise<boolean> {
     if (permissionGranted !== null) return permissionGranted;
@@ -33,22 +34,29 @@ export function useReminders(
   }
 
   async function scan() {
-    if (!(await ensurePermission())) return;
-    const now = Date.now();
-    const leadMs = Math.max(0, leadMinutes.value) * 60_000;
-    for (const task of tasks.value) {
-      if (task.status === "completed" || task.notified) continue;
-      const due = parseStamp(task.dueAt);
-      if (!due) continue;
-      const dueMs = due.getTime();
-      if (dueMs - leadMs <= now && dueMs + CATCHUP_MS >= now) {
-        const overdue = dueMs < now;
-        await sendNotification({
-          title: overdue ? "任务已到期" : "任务即将到期",
-          body: `${task.title} · ${overdue ? "已经过截止时间" : `${leadMinutes.value} 分钟内到期`}`,
-        });
-        await markNotified(task.id);
+    // 定时器与 watch 触发可能并发，加互斥防止同一任务重复发通知
+    if (scanning) return;
+    scanning = true;
+    try {
+      if (!(await ensurePermission())) return;
+      const now = Date.now();
+      const leadMs = Math.max(0, leadMinutes.value) * 60_000;
+      for (const task of tasks.value) {
+        if (task.status === "completed" || task.notified) continue;
+        const due = parseStamp(task.dueAt);
+        if (!due) continue;
+        const dueMs = due.getTime();
+        if (dueMs - leadMs <= now && dueMs + CATCHUP_MS >= now) {
+          const overdue = dueMs < now;
+          await sendNotification({
+            title: overdue ? "任务已到期" : "任务即将到期",
+            body: `${task.title} · ${overdue ? "已经过截止时间" : `${leadMinutes.value} 分钟内到期`}`,
+          });
+          await markNotified(task.id);
+        }
       }
+    } finally {
+      scanning = false;
     }
   }
 

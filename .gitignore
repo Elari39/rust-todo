@@ -30,3 +30,6 @@ src-tauri/target
 
 # 本地已知问题文档，不上传
 KNOWN-ISSUES.local.md
+
+# 图标设计稿与预览页（成品图标已生成在 src-tauri/icons）
+.icon-design/

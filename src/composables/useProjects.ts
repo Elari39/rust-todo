@@ -24,23 +24,32 @@ export function useProjects() {
   }
 
   async function refresh() {
-    loaded = false;
     await load(true);
   }
 
+  /** 变更失败不能静默：写入 error 供横幅展示，并继续抛出让调用方可感知 */
+  async function attempt<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+      throw err;
+    }
+  }
+
   async function create(name: string, color: string) {
-    const project = await api.createProject(name, color);
+    const project = await attempt(() => api.createProject(name, color));
     await refresh();
     return project;
   }
 
   async function update(id: string, name: string, color: string) {
-    await api.updateProject(id, name, color);
+    await attempt(() => api.updateProject(id, name, color));
     await refresh();
   }
 
   async function remove(id: string) {
-    await api.deleteProject(id);
+    await attempt(() => api.deleteProject(id));
     await refresh();
   }
 

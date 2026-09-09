@@ -2,7 +2,7 @@
 name = "todo"
 version = "0.3.1"
 description = "Windows 桌面待办管理"
-authors = ["Elaina"]
+authors = ["Elari39"]
 edition = "2021"
 
 [lib]

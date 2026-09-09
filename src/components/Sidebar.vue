@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onMounted, onUnmounted } from "vue";
 import {
   CalendarDays,
   CheckSquare,
@@ -9,19 +10,50 @@ import {
   SquareKanban,
 } from "lucide-vue-next";
 import type { AppView } from "../types";
+import { useTasks } from "../composables/useTasks";
+import { useTile } from "../composables/useTile";
 
 defineProps<{
   current: AppView;
   todayCount: number;
   allCount: number;
   projectCount: number;
-  lastSync: string;
 }>();
 
 const emit = defineEmits<{
   navigate: [view: AppView];
-  pin: [];
 }>();
+
+const { error } = useTasks();
+const { tileOpen, init, toggle } = useTile();
+
+let bannerTimer = 0;
+let pending = false;
+
+onMounted(() => {
+  void init();
+});
+
+onUnmounted(() => {
+  window.clearTimeout(bannerTimer);
+});
+
+// 左下角按钮直接开关磁贴；失败写共享错误横幅，几秒后自动清除
+async function toggleTile() {
+  if (pending) return;
+  pending = true;
+  try {
+    await toggle();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+    window.clearTimeout(bannerTimer);
+    bannerTimer = window.setTimeout(() => {
+      error.value = "";
+    }, 4000);
+  } finally {
+    pending = false;
+  }
+}
 
 const items: { id: AppView; label: string; icon: typeof CalendarDays; count?: "today" | "all" | "projects" }[] = [
   { id: "today", label: "今日", icon: CalendarDays, count: "today" },
@@ -71,17 +103,16 @@ const items: { id: AppView; label: string; icon: typeof CalendarDays; count?: "t
     </nav>
 
     <div class="sidebar-footer">
-      <button class="pin-btn" type="button" @click="emit('pin')">
+      <button
+        class="pin-btn"
+        :class="{ active: tileOpen }"
+        type="button"
+        :title="tileOpen ? '关闭置顶磁贴' : '打开置顶磁贴'"
+        @click="toggleTile"
+      >
         <Pin :size="16" />
-        <span>置顶磁贴模式</span>
+        <span>{{ tileOpen ? "关闭置顶磁贴" : "打开置顶磁贴" }}</span>
       </button>
-      <div class="status-card">
-        <CheckSquare :size="18" color="#16a34a" />
-        <div>
-          <p><span class="status-dot" /> 在线</p>
-          <small>最近同步：{{ lastSync }}</small>
-        </div>
-      </div>
     </div>
   </aside>
 </template>

@@ -28,13 +28,7 @@ pub fn run() {
                 let app = window.app_handle();
                 let close_to_tray = app
                     .try_state::<AppState>()
-                    .map(|state| {
-                        state
-                            .settings
-                            .lock()
-                            .map(|settings| settings.close_to_tray)
-                            .unwrap_or(true)
-                    })
+                    .map(commands::close_to_tray_pref)
                     .unwrap_or(true);
                 // 系统关机时不拦截，避免托盘化阻塞 Windows 关机流程
                 if close_to_tray && !platform::shutting_down() {
@@ -48,11 +42,11 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             let conn = db::open(&dir.join("todo.db"))
                 .map_err(|err| Box::<dyn std::error::Error>::from(err))?;
-            let app_settings = settings::load(&dir)
-                .map_err(|err| Box::<dyn std::error::Error>::from(err))?;
+            let app_settings = settings::load(&dir);
             app.manage(AppState {
                 db: Mutex::new(conn),
                 settings: Mutex::new(app_settings),
+                tile_lock: Mutex::new(()),
                 data_dir: dir,
             });
 
@@ -68,7 +62,9 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => commands::focus_main(app),
                     "tile" => {
-                        let _ = commands::toggle_tile_inner(app);
+                        if let Err(err) = commands::toggle_tile_inner(app) {
+                            eprintln!("切换磁贴窗口失败: {err}");
+                        }
                     }
                     "quit" => app.exit(0),
                     _ => {}

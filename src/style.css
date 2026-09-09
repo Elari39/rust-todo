@@ -49,12 +49,24 @@ button {
 .app-shell {
   display: grid;
   grid-template-columns: 232px 1fr;
+  /* 约束行高：内容再多也不把侧栏撑出视口，滚动交给内部容器 */
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   padding: 16px;
   gap: 16px;
   background:
     radial-gradient(1200px 420px at 10% -10%, #f8f3e8 0%, transparent 55%),
     var(--bg);
+}
+
+/* 主内容列：超过视口时整列滚动（如设置页），列表视图则由 .task-list 内部滚动 */
+.content-col {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
 }
 
 .sidebar,
@@ -151,29 +163,21 @@ button {
 .pin-btn {
   color: #334155;
   font-weight: 600;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.status-card {
-  background: #eaf8ef;
-  border-radius: 18px;
-  padding: 12px;
-  display: flex;
-  gap: 10px;
-  align-items: center;
+.pin-btn:hover {
+  background: #f1f5f9;
 }
 
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #22c55e;
-}
-
-.status-card small {
-  color: var(--muted);
+/* 磁贴开启中：绿色激活态，点击即关闭 */
+.pin-btn.active {
+  background: #ecfdf5;
+  color: var(--green-deep);
 }
 
 .workspace {
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -244,22 +248,91 @@ button {
   min-width: 240px;
 }
 
+.due-wrap {
+  position: relative;
+}
+
 .due-chip {
   display: flex;
   align-items: center;
   gap: 8px;
+  border: 0;
   background: #f3f6fb;
   border-radius: 999px;
   padding: 8px 12px;
   color: #475569;
-  position: relative;
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
 }
 
-.due-chip input {
-  position: absolute;
+.due-chip:hover {
+  background: #e9eef7;
+}
+
+.due-backdrop {
+  position: fixed;
   inset: 0;
-  opacity: 0;
+  z-index: 40;
+}
+
+.due-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 50;
+  width: 264px;
+  padding: 10px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(48, 42, 30, 0.18);
+}
+
+.due-presets {
+  display: flex;
+  gap: 6px;
+}
+
+.due-preset {
+  flex: 1;
+  border: 0;
+  border-radius: 10px;
+  padding: 7px 4px;
+  background: #f3f6fb;
+  color: #475569;
+  font-family: inherit;
+  font-size: 12px;
   cursor: pointer;
+}
+
+.due-preset:hover {
+  background: #e9eef7;
+}
+
+.due-preset.on {
+  background: var(--blue);
+  color: #fff;
+}
+
+.due-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.due-custom input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #fff;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
 }
 
 .btn {
@@ -457,26 +530,48 @@ button {
 
 .month-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  /* minmax(0, 1fr)：列宽不被事件标题的 min-content 撑宽，保证每行严格对齐 */
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
 }
 
+.month-head {
+  margin-bottom: 8px;
+}
+
+.month-head strong {
+  font-size: 13px;
+  text-align: center;
+  color: #64748b;
+}
+
 .month-cell {
+  min-width: 0;
   min-height: 92px;
-  background: #faf8f3;
-  border-radius: 14px;
   padding: 8px;
+  border-radius: 14px;
+  background: #faf8f3;
+  overflow: hidden;
+}
+
+.month-cell > b {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
 }
 
 .month-cell.muted {
   opacity: 0.45;
 }
 
+/* 内描边高亮：不向外扩 2px，今日块与其它块占位完全一致 */
 .month-cell.today {
-  outline: 2px solid var(--blue);
+  box-shadow: inset 0 0 0 2px var(--blue);
+  background: #f3f7ff;
 }
 
 .event {
+  max-width: 100%;
   font-size: 11px;
   background: #eef2ff;
   color: var(--blue);
@@ -486,6 +581,12 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.month-more {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #94a3b8;
 }
 
 .gantt-row {
@@ -582,8 +683,6 @@ button {
   .nav-label,
   .nav-item span,
   .pin-btn span,
-  .status-card p,
-  .status-card small,
   .nav-item .count {
     display: none;
   }

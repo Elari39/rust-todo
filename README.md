@@ -66,7 +66,7 @@ A：默认最小化到系统托盘（托盘左键唤回，右键菜单退出）�
 
 **Q：怎么在本地跑起来？**
 
-A：需要 Node 18+、Rust 1.77+ 和 WebView2 Runtime（Win11 一般自带）。
+A：需要 Node 20.19+（或 22.12+，Vite 7 的要求）、Rust 1.78+（lockfile v4 格式的要求）和 WebView2 Runtime（Win11 一般自带）。
 
 ```bash
 npm install
@@ -82,6 +82,17 @@ npm run tauri build
 ```
 
 产物为 NSIS 安装包（`src-tauri/target/release/bundle/nsis/`）。
+
+**Q：怎么跑测试？**
+
+A：
+
+```bash
+npm test                                    # 前端单测（vitest）
+cargo test --manifest-path src-tauri/Cargo.toml   # 后端单测
+```
+
+推送到 GitHub 后 CI（`.github/workflows/ci.yml`）会自动执行类型检查、构建和两侧测试。
 
 **Q：项目结构是什么样的？**
 

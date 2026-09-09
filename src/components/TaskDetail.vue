@@ -44,8 +44,9 @@ const editing = reactive({
   projectId: "",
 });
 
+// 同时跟踪 updatedAt：任务在别处被更新（磁贴窗口、提醒标记）后表单重新同步，防止旧数据覆盖
 watch(
-  () => props.task.id,
+  () => [props.task.id, props.task.updatedAt],
   () => {
     editing.on = false;
     editing.title = props.task.title;
@@ -104,7 +105,7 @@ function save() {
       <p v-if="task.notes" style="margin: 0; color: #64748b">{{ task.notes }}</p>
       <div class="kv"><span>开始</span><b>{{ formatDate(task.startAt) }}</b></div>
       <div class="kv"><span>结束</span><b>{{ formatDate(task.dueAt) }}</b></div>
-      <div class="kv"><span>时长</span><b>{{ hours == null ? "未计算" : `${hours} 小时` }}</b></div>
+      <div class="kv"><span>时长</span><b>{{ hours == null ? "未计算" : hours === 0 ? "<1 小时" : `${hours} 小时` }}</b></div>
       <div class="kv"><span>项目</span><b>{{ nameOf(task.projectId) }}</b></div>
       <div class="detail-actions">
         <button

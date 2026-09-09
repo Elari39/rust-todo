@@ -2,7 +2,16 @@
 import { computed, ref } from "vue";
 import { Clock3, Plus, Zap } from "lucide-vue-next";
 import type { Task, TaskKind, TaskPatch } from "../types";
-import { defaultDue, dueLabel, formatClock, fromInputValue, parseStamp, toInputValue, weekdayName } from "../utils/datetime";
+import {
+  defaultDue,
+  dueLabel,
+  formatClock,
+  fromInputValue,
+  parseStamp,
+  toInputValue,
+  toStamp,
+  weekdayName,
+} from "../utils/datetime";
 import TaskCard from "./TaskCard.vue";
 import TaskDetail from "./TaskDetail.vue";
 
@@ -24,6 +33,21 @@ const emit = defineEmits<{
 
 const draft = ref("");
 const dueAt = ref(toInputValue(defaultDue()));
+const dueOpen = ref(false);
+
+// 预设保持默认的 18:40 时刻，只切换日期
+function presetInput(offsetDays: number): string {
+  const date = new Date(props.now);
+  date.setDate(date.getDate() + offsetDays);
+  date.setHours(18, 40, 0, 0);
+  return toInputValue(toStamp(date));
+}
+
+const presets = computed(() => [
+  { label: "今天 18:40", value: presetInput(0) },
+  { label: "明天 18:40", value: presetInput(1) },
+  { label: "后天 18:40", value: presetInput(2) },
+]);
 
 const headline = computed(() => `${props.now.getMonth() + 1} 月 ${props.now.getDate()} 日`);
 const nearest = computed(() => {
@@ -50,11 +74,34 @@ function submit(kind: TaskKind) {
       <p>{{ allPending }} 项待办，最近一项 {{ nearest }} 到期。</p>
       <form class="composer" @submit.prevent="submit('quick')">
         <input v-model="draft" type="text" placeholder="输入临时待办，如：买车票、联系张三" />
-        <label class="due-chip">
-          <Clock3 :size="16" />
-          {{ dueLabel(dueAt, now) }}
-          <input v-model="dueAt" type="datetime-local" />
-        </label>
+        <div class="due-wrap">
+          <button class="due-chip" type="button" title="选择截止时间" @click="dueOpen = !dueOpen">
+            <Clock3 :size="16" />
+            {{ dueLabel(dueAt, now) }}
+          </button>
+          <div v-if="dueOpen" class="due-backdrop" @click="dueOpen = false" />
+          <div v-if="dueOpen" class="due-pop">
+            <div class="due-presets">
+              <button
+                v-for="preset in presets"
+                :key="preset.value"
+                class="due-preset"
+                :class="{ on: dueAt === preset.value }"
+                type="button"
+                @click="
+                  dueAt = preset.value;
+                  dueOpen = false;
+                "
+              >
+                {{ preset.label }}
+              </button>
+            </div>
+            <label class="due-custom">
+              <span>自定义</span>
+              <input v-model="dueAt" type="datetime-local" @change="dueOpen = false" />
+            </label>
+          </div>
+        </div>
         <button class="btn btn-green" type="button" @click="submit('detailed')">
           <Plus :size="16" /> 新建详细任务
         </button>

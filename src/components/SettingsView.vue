@@ -1,30 +1,40 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
+import { getVersion } from "@tauri-apps/api/app";
 import { Download, Pin, Power } from "lucide-vue-next";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { api } from "../api";
 import { useSettings } from "../composables/useSettings";
+import { useTile } from "../composables/useTile";
 
 const { settings, load, save } = useSettings();
+const { tileOpen, init, toggle: toggleTileWindow } = useTile();
 
 const leadInput = ref("15");
-const tileOpen = ref(false);
 const autoStart = ref(false);
 const dir = ref("");
 const busy = ref("");
 const message = ref("");
+const version = ref("");
+let flashTimer = 0;
 
 onMounted(async () => {
   await load();
   leadInput.value = String(settings.value.notificationLeadMinutes);
-  tileOpen.value = await api.tileState().catch(() => false);
   autoStart.value = await isEnabled().catch(() => false);
   dir.value = await api.dataDir().catch(() => "");
+  version.value = await getVersion().catch(() => "");
+  void init();
+});
+
+onUnmounted(() => {
+  window.clearTimeout(flashTimer);
 });
 
 function flash(text: string) {
   message.value = text;
-  window.setTimeout(() => {
+  window.clearTimeout(flashTimer);
+  flashTimer = window.setTimeout(() => {
     message.value = "";
   }, 3000);
 }
@@ -48,7 +58,7 @@ async function saveLead() {
 async function toggleTile() {
   busy.value = "tile";
   try {
-    tileOpen.value = await api.toggleTileWindow();
+    await toggleTileWindow();
   } catch (err) {
     flash(err instanceof Error ? err.message : String(err));
   } finally {
@@ -196,7 +206,7 @@ async function exportBackup() {
       <div class="settings-row last">
         <div>
           <b>关于</b>
-          <p class="settings-hint">Todo v0.3.1 · Tauri 2 + Vue 3 + SQLite</p>
+          <p class="settings-hint">Todo<template v-if="version"> v{{ version }}</template> · Tauri 2 + Vue 3 + SQLite</p>
         </div>
       </div>
 
