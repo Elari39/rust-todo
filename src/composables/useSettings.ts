@@ -5,6 +5,7 @@ import type { AppSettings } from "../types";
 // 模块级单例：设置在主窗口内全局共享
 const settings = ref<AppSettings>({ notificationLeadMinutes: 15, closeToTray: true });
 const loaded = ref(false);
+const loadError = ref("");
 
 export function useSettings() {
   async function load(force = false) {
@@ -12,8 +13,10 @@ export function useSettings() {
     try {
       settings.value = await api.getSettings();
       loaded.value = true;
-    } catch {
-      // 读不到就用默认值，设置页保存时会重试
+      loadError.value = "";
+    } catch (err) {
+      // 读不到就用默认值，设置页保存时会重试；但失败原因要让用户可见
+      loadError.value = err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -26,5 +29,5 @@ export function useSettings() {
     return saved;
   }
 
-  return { settings, loaded, load, save };
+  return { settings, loaded, loadError, load, save };
 }

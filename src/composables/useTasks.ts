@@ -3,27 +3,30 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "../api";
 import type { NewTask, Task, TaskPatch, TaskStatus } from "../types";
-import { isOverdue, nearestDue, overlapsToday } from "../utils/datetime";
+import { useClock } from "./useClock";
+import { isOverdue, overlapsToday } from "../utils/datetime";
 
 // 模块级单例：同一窗口内共享同一份任务状态（磁贴窗口复用同一前端，也只拉取一次）
 const tasks = ref<Task[]>([]);
 const loading = ref(true);
 const error = ref("");
 const selectedId = ref<string | null>(null);
+const clock = useClock();
 
 const selected = computed(
   () => tasks.value.find((task) => task.id === selectedId.value) ?? null,
 );
 
 const pending = computed(() => tasks.value.filter((task) => task.status !== "completed"));
+// 传入响应式时钟：跨午夜、到期时刻后自动重算，今日列表与逾期标记不再停留在旧状态
 const todayTasks = computed(() =>
-  tasks.value.filter((task) => overlapsToday(task) || isOverdue(task)),
+  tasks.value.filter(
+    (task) => overlapsToday(task, clock.value) || isOverdue(task, clock.value),
+  ),
 );
 const todayCount = computed(
   () => todayTasks.value.filter((task) => task.status !== "completed").length,
 );
-const overdueCount = computed(() => pending.value.filter((task) => isOverdue(task)).length);
-const nextDue = computed(() => nearestDue(pending.value));
 
 /** 变更失败不能静默：写入 error 供横幅展示，并继续抛出让调用方可感知 */
 async function attempt<T>(run: () => Promise<T>): Promise<T> {
@@ -35,15 +38,24 @@ async function attempt<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+// 单调序号守卫：磁贴轮询、跨窗口事件、变更操作会并发触发多次刷新，
+// IPC 返回顺序不保证与调用顺序一致，过期响应必须丢弃，避免旧数据覆盖新数据
+let refreshSeq = 0;
+
 async function refresh() {
+  const seq = ++refreshSeq;
   loading.value = true;
   try {
-    tasks.value = await api.listTasks();
+    const data = await api.listTasks();
+    if (seq !== refreshSeq) return;
+    tasks.value = data;
     error.value = "";
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    if (seq === refreshSeq) {
+      error.value = err instanceof Error ? err.message : String(err);
+    }
   } finally {
-    loading.value = false;
+    if (seq === refreshSeq) loading.value = false;
   }
 }
 
@@ -52,10 +64,13 @@ async function refresh() {
 // 变更函数里手动刷新过，跳过；其余窗口防抖合并连续事件后重拉。
 const myLabel = getCurrentWindow().label;
 let syncTimer = 0;
-void listen<string>("tasks-changed", (event) => {
+listen<string>("tasks-changed", (event) => {
   if (event.payload === myLabel) return;
   window.clearTimeout(syncTimer);
   syncTimer = window.setTimeout(() => void refresh(), 120);
+}).catch((err) => {
+  // 监听建立失败意味着跨窗口同步整个失效，必须让用户可见
+  error.value = `跨窗口同步不可用: ${err instanceof Error ? err.message : String(err)}`;
 });
 
 function setLocalStatus(id: string, status: TaskStatus) {
@@ -103,14 +118,29 @@ async function remove(id: string) {
   await refresh();
 }
 
-async function markNotified(id: string) {
-  await attempt(() => api.markNotified(id));
+/** 批量标记已提醒：合并为一次列表刷新，避免每个到期任务各拉一次全量数据 */
+async function markNotifiedMany(ids: string[]) {
+  for (const id of ids) {
+    try {
+      await api.markNotified(id);
+    } catch (err) {
+      // 单个标记失败（如任务已被其他窗口删除）不中断，横幅提示后继续
+      error.value = err instanceof Error ? err.message : String(err);
+    }
+  }
   await refresh();
 }
 
 async function reorder(orderedIds: string[]) {
-  await attempt(() => api.reorderTasks(orderedIds));
-  await refresh();
+  const snapshot = tasks.value;
+  try {
+    await attempt(() => api.reorderTasks(orderedIds));
+    await refresh();
+  } catch {
+    // 恢复为数据库真实顺序：换新数组引用触发组件 watch，撤销未落库的本地预览，
+    // 否则列表会一直显示拖拽预览顺序。错误横幅已由 attempt 写入。
+    tasks.value = [...snapshot];
+  }
 }
 
 function select(id: string | null) {
@@ -120,22 +150,19 @@ function select(id: string | null) {
 export function useTasks() {
   return {
     tasks,
-    loading,
     error,
     selected,
     selectedId,
     pending,
     todayTasks,
     todayCount,
-    overdueCount,
-    nextDue,
     refresh,
     create,
     update,
     complete,
     reopen,
     remove,
-    markNotified,
+    markNotifiedMany,
     reorder,
     select,
   };

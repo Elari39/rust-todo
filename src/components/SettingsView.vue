@@ -7,7 +7,7 @@ import { api } from "../api";
 import { useSettings } from "../composables/useSettings";
 import { useTile } from "../composables/useTile";
 
-const { settings, load, save } = useSettings();
+const { settings, loadError, load, save } = useSettings();
 const { tileOpen, init, toggle: toggleTileWindow } = useTile();
 
 const leadInput = ref("15");
@@ -210,6 +210,7 @@ async function exportBackup() {
         </div>
       </div>
 
+      <p v-if="loadError" class="error-banner" role="alert">设置读取失败，当前显示默认值：{{ loadError }}</p>
       <p v-if="message" class="settings-message">{{ message }}</p>
     </div>
   </section>

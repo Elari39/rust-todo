@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import Sidebar from "./components/Sidebar.vue";
 import TodayView from "./components/TodayView.vue";
@@ -9,12 +9,13 @@ import GanttView from "./components/GanttView.vue";
 import ProjectsView from "./components/ProjectsView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import TileApp from "./components/TileApp.vue";
+import { useClock } from "./composables/useClock";
 import { useProjects } from "./composables/useProjects";
 import { useReminders } from "./composables/useReminders";
 import { useSettings } from "./composables/useSettings";
 import { useTasks } from "./composables/useTasks";
 import type { AppView, TaskKind } from "./types";
-import { pad } from "./utils/datetime";
+import { toStamp } from "./utils/datetime";
 
 // 置顶磁贴是第二个窗口，加载同一份前端，按窗口 label 切换 UI
 const isTile = getCurrentWindow().label === "tile";
@@ -31,7 +32,7 @@ const {
   complete,
   reopen,
   remove,
-  markNotified,
+  markNotifiedMany,
   reorder,
   select,
   refresh,
@@ -41,18 +42,16 @@ const { projects, load: loadProjects } = useProjects();
 const { settings, load: loadSettings } = useSettings();
 
 if (!isTile) {
-  useReminders(tasks, markNotified, computed(() => settings.value.notificationLeadMinutes));
+  useReminders(tasks, markNotifiedMany, computed(() => settings.value.notificationLeadMinutes));
 }
 
 const view = ref<AppView>("today");
 const activeProjectId = ref<string | null>(null);
-const now = ref(new Date());
-let clock = 0;
+const now = useClock();
+const allView = ref<InstanceType<typeof AllTasksView> | null>(null);
 
 onMounted(() => {
-  clock = window.setInterval(() => {
-    now.value = new Date();
-  }, 30_000);
+  window.addEventListener("keydown", onGlobalKeydown);
   if (!isTile) {
     void refresh();
     void loadProjects();
@@ -61,16 +60,24 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  window.clearInterval(clock);
+  window.removeEventListener("keydown", onGlobalKeydown);
 });
 
+// Ctrl+K 全局搜索入口：任何视图都能跳到「全部任务」并聚焦搜索框
+function onGlobalKeydown(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    navigate("all");
+    void nextTick(() => allView.value?.focusSearch());
+  }
+}
+
 async function createQuick(payload: { title: string; kind: TaskKind; dueAt: string }) {
-  const start = new Date();
   await create({
     title: payload.title,
     kind: payload.kind,
     priority: payload.kind === "detailed" ? "high" : "normal",
-    startAt: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}T${pad(start.getHours())}:${pad(start.getMinutes())}:00`,
+    startAt: toStamp(new Date()),
     dueAt: payload.dueAt,
   });
 }
@@ -99,7 +106,7 @@ function openProject(id: string) {
     />
 
     <div class="content-col">
-      <div v-if="error" class="error-banner">{{ error }}</div>
+      <div v-if="error" class="error-banner" role="alert">{{ error }}</div>
 
       <TodayView
         v-if="view === 'today'"
@@ -107,8 +114,8 @@ function openProject(id: string) {
         :tasks="todayTasks"
         :selected="selected"
         :all-pending="pending.length"
+        :on-create="createQuick"
         @select="select"
-        @create="createQuick"
         @complete="complete"
         @reopen="reopen"
         @remove="remove"
@@ -117,6 +124,7 @@ function openProject(id: string) {
 
       <AllTasksView
         v-else-if="view === 'all'"
+        ref="allView"
         :tasks="tasks"
         :selected="selected"
         :project-id="activeProjectId"

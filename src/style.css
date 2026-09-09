@@ -442,13 +442,21 @@ button {
 .dot.cyan { background: #22a6c8; }
 .dot.green { background: #22c55e; }
 
+/* 卡片主体改用 span 以满足 button 的内容模型（只允许 phrasing content） */
+.task-card-body {
+  display: block;
+  min-width: 0;
+}
+
 .task-title {
+  display: block;
   margin: 0;
   font-size: 15px;
   font-weight: 650;
 }
 
 .task-meta {
+  display: block;
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 12px;

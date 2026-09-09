@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { ArrowDownUp, Search, X } from "lucide-vue-next";
 import { useProjects } from "../composables/useProjects";
 import type { Task, TaskPatch } from "../types";
@@ -23,7 +23,7 @@ const emit = defineEmits<{
   reorder: [orderedIds: string[]];
 }>();
 
-const { projects } = useProjects();
+const { projects, load: loadProjects } = useProjects();
 const query = ref("");
 const filter = ref<"all" | "pending" | "completed">("all");
 const sortMode = ref<"due" | "manual">("due");
@@ -111,16 +111,18 @@ watch([query, filter, sortMode, () => props.tasks], () => {
   localOrder.value = null;
 });
 
-function onKeydown(event: KeyboardEvent) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-    event.preventDefault();
-    inputRef.value?.focus();
-    inputRef.value?.select();
-  }
+// Ctrl+K 由 App 全局处理并调用本方法，聚焦搜索框
+function focusSearch() {
+  inputRef.value?.focus();
+  inputRef.value?.select();
 }
 
-onMounted(() => window.addEventListener("keydown", onKeydown));
-onUnmounted(() => window.removeEventListener("keydown", onKeydown));
+defineExpose({ focusSearch });
+
+onMounted(() => {
+  // 初次加载失败时进入本视图补拉一次，项目名不再一直显示「未分组」
+  if (!projects.value.length) void loadProjects();
+});
 </script>
 
 <template>

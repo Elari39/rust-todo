@@ -28,6 +28,8 @@ const rows = computed(() => {
     const right = Math.min(100, ((due - origin) / span) * 100);
     result.push({ task, left, width: Math.min(Math.max(4, right - left), 100 - left) });
   }
+  // 按条形起点排序输出，时间线自上而下递进，不再跟随数据库顺序
+  result.sort((a, b) => a.left - b.left || b.width - a.width);
   return result;
 });
 </script>

@@ -1,0 +1,66 @@
+name: Release
+
+# 推送 v* 标签时构建 NSIS 安装包与免安装便携版，并创建 GitHub Release
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # 创建 draft Release 并上传 NSIS 安装包（Todo_<版本>_x64-setup.exe）
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: .
+          tagName: ${{ github.ref_name }}
+          releaseName: "Todo ${{ github.ref_name }}"
+          releaseBody: "详见 [CHANGELOG.md](https://github.com/Elari39/rust-todo/blob/main/CHANGELOG.md)。"
+          releaseDraft: true
+          prerelease: false
+
+      # 免安装便携版：release 目录下的单体 todo.exe 即可运行（依赖系统 WebView2）
+      - name: Package portable build
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $version = $env:TAG.TrimStart("v")
+          Compress-Archive `
+            -Path "src-tauri/target/release/todo.exe" `
+            -DestinationPath "src-tauri/target/release/Todo_${version}_x64_portable.zip" `
+            -Force
+          Get-Item "src-tauri/target/release/Todo_${version}_x64_portable.zip" | Select-Object Name, Length
+
+      - name: Upload portable zip to draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload $env:TAG (Get-ChildItem "src-tauri/target/release/Todo_*_x64_portable.zip").FullName --clobber

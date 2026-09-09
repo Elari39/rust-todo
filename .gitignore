@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 src-tauri/target
+coverage/
+
+# 数据库文件安全网：数据库正常在 %APPDATA%，绝不该出现在仓库里
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
 
 # Editor directories and files
 .vscode/*

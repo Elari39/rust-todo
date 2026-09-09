@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tile-capability",
+  "description": "置顶磁贴窗口：仅手动拖动所需的窗口能力，不授予通知/自启权限",
+  "windows": ["tile"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-set-position",
+    "core:window:allow-outer-position"
+  ]
+}

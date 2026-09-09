@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { Pencil } from "lucide-vue-next";
+import { useClock } from "../composables/useClock";
 import { useProjects } from "../composables/useProjects";
 import type { Task } from "../types";
 import { formatRange, isOverdue } from "../utils/datetime";
@@ -15,10 +16,12 @@ const emit = defineEmits<{
 }>();
 
 const { projectMap } = useProjects();
+const clock = useClock();
 
+// 逾期标记依赖响应式时钟：跨午夜、到期时刻后卡片颜色自动切换
 const color = computed(() => {
   if (props.task.status === "completed") return "green";
-  if (isOverdue(props.task)) return "red";
+  if (isOverdue(props.task, clock.value)) return "red";
   if (props.task.priority === "high") return "orange";
   return "cyan";
 });
@@ -36,17 +39,17 @@ const project = computed(() =>
     @click="emit('select')"
   >
     <span class="dot" :class="color" />
-    <div>
-      <p class="task-title">{{ task.title }}</p>
-      <p class="task-meta">
+    <span class="task-card-body">
+      <span class="task-title">{{ task.title }}</span>
+      <span class="task-meta">
         <span
           v-if="project"
           class="proj-tag"
           :style="{ color: project.color }"
         ><i class="proj-dot" :style="{ background: project.color }" />{{ project.name }}</span>
         {{ formatRange(task.startAt, task.dueAt) }}
-      </p>
-    </div>
+      </span>
+    </span>
     <Pencil :size="16" color="#94a3b8" />
   </button>
 </template>

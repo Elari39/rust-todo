@@ -20,11 +20,11 @@ const props = defineProps<{
   tasks: Task[];
   selected: Task | null;
   allPending: number;
+  onCreate: (payload: { title: string; kind: TaskKind; dueAt: string }) => Promise<void>;
 }>();
 
 const emit = defineEmits<{
   select: [id: string | null];
-  create: [payload: { title: string; kind: TaskKind; dueAt: string }];
   complete: [id: string];
   reopen: [id: string];
   remove: [id: string];
@@ -58,10 +58,19 @@ const nearest = computed(() => {
   return due ? formatClock(due) : "--:--";
 });
 
-function submit(kind: TaskKind) {
+async function submit(kind: TaskKind) {
   const title = draft.value.trim();
   if (!title) return;
-  emit("create", { title, kind, dueAt: fromInputValue(dueAt.value) ?? defaultDue() });
+  try {
+    await props.onCreate({
+      title,
+      kind,
+      dueAt: fromInputValue(dueAt.value) ?? defaultDue(),
+    });
+  } catch {
+    // 失败已在错误横幅展示；保留输入让用户直接重试，不必重打
+    return;
+  }
   draft.value = "";
 }
 </script>
@@ -80,7 +89,7 @@ function submit(kind: TaskKind) {
             {{ dueLabel(dueAt, now) }}
           </button>
           <div v-if="dueOpen" class="due-backdrop" @click="dueOpen = false" />
-          <div v-if="dueOpen" class="due-pop">
+          <div v-if="dueOpen" class="due-pop" @keydown.esc="dueOpen = false">
             <div class="due-presets">
               <button
                 v-for="preset in presets"
@@ -102,7 +111,12 @@ function submit(kind: TaskKind) {
             </label>
           </div>
         </div>
-        <button class="btn btn-green" type="button" @click="submit('detailed')">
+        <button
+          class="btn btn-green"
+          type="button"
+          title="详细任务默认标记为「紧急」优先级"
+          @click="submit('detailed')"
+        >
           <Plus :size="16" /> 新建详细任务
         </button>
         <button class="btn btn-orange" type="submit">

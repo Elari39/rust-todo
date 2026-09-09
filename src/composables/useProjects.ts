@@ -10,7 +10,8 @@ let loaded = false;
 
 export function useProjects() {
   async function load(force = false) {
-    if (loaded && !force) return;
+    // 防重入：多处组件挂载时都可能触发重试，避免并发拉取互相覆盖
+    if ((loaded && !force) || loading.value) return;
     loading.value = true;
     error.value = "";
     try {

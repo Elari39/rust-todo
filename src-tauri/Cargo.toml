@@ -1,13 +1,16 @@
 [package]
 name = "todo"
-version = "0.3.1"
+version = "0.3.2"
 description = "Windows 桌面待办管理"
 authors = ["Elari39"]
 edition = "2021"
+rust-version = "1.78"
+license = "MIT"
+repository = "https://github.com/Elari39/rust-todo"
 
 [lib]
 name = "todo_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -20,6 +23,7 @@ serde_json = "1"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
 uuid = { version = "1", features = ["v4"] }
 
 # Windows 专用：系统关机中不再拦截窗口关闭，避免托盘化阻塞关机

@@ -32,12 +32,41 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 "#;
 
 pub fn open(path: &std::path::Path) -> Result<Connection, String> {
+    match open_inner(path) {
+        Ok(conn) => Ok(conn),
+        Err(err) => {
+            // 数据库文件损坏时备份现场再重建，绝不让应用完全无法启动
+            if err.contains("file is not a database") && path.exists() {
+                let file_name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("todo.db");
+                let backup = path.with_file_name(format!(
+                    "{file_name}.corrupt-{}",
+                    Local::now().format("%Y%m%d-%H%M%S")
+                ));
+                let _ = std::fs::rename(path, backup);
+                return open_inner(path);
+            }
+            Err(err)
+        }
+    }
+}
+
+fn open_inner(path: &std::path::Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(to_err)?;
+    // WAL + busy_timeout：开机自启 + 手动双开等场景下，另一进程持有写锁时
+    // 等待重试而不是立即报 SQLITE_BUSY
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(to_err)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(to_err)?;
     let projects_fresh = !table_exists(&conn, "projects")?;
     let tasks_fresh = !table_exists(&conn, "tasks")?;
     conn.execute_batch(SCHEMA).map_err(to_err)?;
     ensure_sort_order(&conn)?;
-    // 只在新建库时写入示例数据；老库即使任务被用户清空也不再复活种子
+    // 仅当库中缺 projects/tasks 表时补种示例数据（v0.2 前的旧库没有这两张表，
+    // 升级时同样补齐）；老库即使任务被用户清空也不再复活种子
     if projects_fresh || tasks_fresh {
         let tx = conn.unchecked_transaction().map_err(to_err)?;
         if projects_fresh {
@@ -87,7 +116,11 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, String> {
 }
 
 fn seed_projects(conn: &Connection) -> Result<(), String> {
-    for (name, color) in [("工作", "#3D5BDB"), ("生活", "#16A34A"), ("学习", "#F59E0B")] {
+    for (name, color) in [
+        ("工作", "#3D5BDB"),
+        ("生活", "#16A34A"),
+        ("学习", "#F59E0B"),
+    ] {
         insert_project(conn, name, color)?;
     }
     Ok(())
@@ -105,11 +138,9 @@ fn ensure_project_exists(conn: &Connection, project_id: Option<&str>) -> Result<
         return Ok(());
     };
     let found: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM projects WHERE id = ?1",
-            [id],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM projects WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
         .map_err(to_err)?;
     if found == 0 {
         return Err("项目不存在".into());
@@ -205,6 +236,24 @@ fn now_stamp() -> String {
     Local::now().format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
+/// 日期字符串入库前严格校验：list 的字典序排序与前端提醒都依赖
+/// `YYYY-MM-DD[T ]HH:MM:SS` 格式成立，脏数据会静默破坏这两处
+fn validate_stamp(value: Option<&str>) -> Result<(), String> {
+    let Some(text) = value else {
+        return Ok(());
+    };
+    // 空串与 None 同义：表示清除字段
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    for format in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"] {
+        if chrono::NaiveDateTime::parse_from_str(text, format).is_ok() {
+            return Ok(());
+        }
+    }
+    Err(format!("无效的日期格式: {text}"))
+}
+
 fn to_err(err: impl ToString) -> String {
     err.to_string()
 }
@@ -258,6 +307,10 @@ pub fn insert(conn: &Connection, input: NewTask) -> Result<Task, String> {
         return Err("标题不能为空".into());
     }
     ensure_project_exists(conn, input.project_id.as_deref())?;
+    let start_at = empty_to_none(input.start_at);
+    let due_at = empty_to_none(input.due_at);
+    validate_stamp(start_at.as_deref())?;
+    validate_stamp(due_at.as_deref())?;
     let id = Uuid::new_v4().to_string();
     let stamp = now_stamp();
     let priority = normalize_priority(input.priority.as_deref().unwrap_or("normal"));
@@ -271,8 +324,8 @@ pub fn insert(conn: &Connection, input: NewTask) -> Result<Task, String> {
             empty_to_none(input.notes),
             priority,
             kind,
-            empty_to_none(input.start_at),
-            empty_to_none(input.due_at),
+            start_at,
+            due_at,
             stamp,
             input.project_id
         ],
@@ -311,13 +364,24 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
         .as_deref()
         .map(normalize_kind)
         .unwrap_or(current.kind);
+    validate_stamp(patch.start_at.as_deref())?;
+    validate_stamp(patch.due_at.as_deref())?;
     let start_at = match patch.start_at {
-        Some(value) => empty_to_none(Some(value)),
-        None => current.start_at,
+        Some(ref value) => empty_to_none(Some(value.clone())),
+        None => current.start_at.clone(),
     };
     let due_at = match patch.due_at {
-        Some(value) => empty_to_none(Some(value)),
-        None => current.due_at,
+        Some(ref value) => empty_to_none(Some(value.clone())),
+        None => current.due_at.clone(),
+    };
+    // 改期或重开都让任务重新进入提醒流程：已提醒过的任务改了截止时间，
+    // 不重置 notified 会导致新提醒永不触发
+    let due_changed = patch.due_at.is_some() && due_at != current.due_at;
+    let reopened = patch.status.as_deref() == Some("pending") && current.status == "completed";
+    let notified = if due_changed || reopened {
+        false
+    } else {
+        current.notified
     };
     // 只校验显式传入的 project_id；存量数据里的孤儿引用不阻塞后续编辑
     if let Some(value) = patch.project_id.as_deref() {
@@ -342,8 +406,8 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
     };
     let stamp = now_stamp();
     conn.execute(
-        "UPDATE tasks SET title=?1, notes=?2, priority=?3, kind=?4, start_at=?5, due_at=?6, status=?7, completed_at=?8, project_id=?9, updated_at=?10 WHERE id=?11",
-        params![title, notes, priority, kind, start_at, due_at, status, completed_at, project_id, stamp, id],
+        "UPDATE tasks SET title=?1, notes=?2, priority=?3, kind=?4, start_at=?5, due_at=?6, status=?7, completed_at=?8, project_id=?9, notified=?10, updated_at=?11 WHERE id=?12",
+        params![title, notes, priority, kind, start_at, due_at, status, completed_at, project_id, notified, stamp, id],
     )
     .map_err(to_err)?;
     get(conn, id)
@@ -377,8 +441,12 @@ pub fn delete(conn: &Connection, id: &str) -> Result<(), String> {
 }
 
 pub fn mark_notified(conn: &Connection, id: &str) -> Result<Task, String> {
-    conn.execute("UPDATE tasks SET notified = 1 WHERE id = ?1", [id])
+    let changed = conn
+        .execute("UPDATE tasks SET notified = 1 WHERE id = ?1", [id])
         .map_err(to_err)?;
+    if changed == 0 {
+        return Err("任务不存在".into());
+    }
     get(conn, id)
 }
 
@@ -492,16 +560,18 @@ pub fn update_project(
     get_project(conn, id)
 }
 
-pub fn delete_project(conn: &Connection, id: &str) -> Result<(), String> {
+/// 事务包裹：解绑任务与删除项目要么同时生效，要么都不生效
+pub fn delete_project(conn: &mut Connection, id: &str) -> Result<(), String> {
     get_project(conn, id)?;
-    conn.execute(
+    let tx = conn.transaction().map_err(to_err)?;
+    tx.execute(
         "UPDATE tasks SET project_id = NULL WHERE project_id = ?1",
         [id],
     )
     .map_err(to_err)?;
-    conn.execute("DELETE FROM projects WHERE id = ?1", [id])
+    tx.execute("DELETE FROM projects WHERE id = ?1", [id])
         .map_err(to_err)?;
-    Ok(())
+    tx.commit().map_err(to_err)
 }
 
 fn normalize_priority(value: &str) -> String {
@@ -604,7 +674,7 @@ mod tests {
 
     #[test]
     fn project_lifecycle_unassigns_tasks() {
-        let conn = memory();
+        let mut conn = memory();
         let project = insert_project(&conn, "工作", "#3D5BDB").unwrap();
         assert_eq!(list_projects(&conn).unwrap().len(), 1);
 
@@ -628,7 +698,7 @@ mod tests {
             "同名项目已存在"
         );
 
-        delete_project(&conn, &project.id).unwrap();
+        delete_project(&mut conn, &project.id).unwrap();
         assert!(list_projects(&conn).unwrap().is_empty());
         assert_eq!(get(&conn, &task.id).unwrap().project_id, None);
     }
@@ -738,5 +808,150 @@ mod tests {
         )
         .unwrap();
         assert_eq!(assigned.project_id, Some(project.id));
+    }
+
+    #[test]
+    fn reschedule_and_reopen_rearm_reminders() {
+        let conn = memory();
+        let task = insert(
+            &conn,
+            NewTask {
+                due_at: Some("2026-09-09T18:40:00".into()),
+                ..bare_new("任务")
+            },
+        )
+        .unwrap();
+        mark_notified(&conn, &task.id).unwrap();
+        assert!(get(&conn, &task.id).unwrap().notified);
+
+        // 改期后重新进入提醒流程
+        let rescheduled = update(
+            &conn,
+            &task.id,
+            TaskPatch {
+                due_at: Some("2026-12-01T09:00:00".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!rescheduled.notified);
+
+        // 截止时间未变时保留已提醒状态
+        mark_notified(&conn, &task.id).unwrap();
+        let untouched = update(
+            &conn,
+            &task.id,
+            TaskPatch {
+                title: Some("改名".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(untouched.notified);
+
+        // 重开同样重置提醒
+        complete(&conn, &task.id).unwrap();
+        let reopened = update(
+            &conn,
+            &task.id,
+            TaskPatch {
+                status: Some("pending".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!reopened.notified);
+    }
+
+    #[test]
+    fn reject_invalid_date_format() {
+        let conn = memory();
+        let err = insert(
+            &conn,
+            NewTask {
+                due_at: Some("明天下午".into()),
+                ..bare_new("任务")
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("无效的日期格式"));
+
+        let task = insert(&conn, bare_new("任务")).unwrap();
+        let err = update(
+            &conn,
+            &task.id,
+            TaskPatch {
+                start_at: Some("2026/09/09 10:00".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("无效的日期格式"));
+
+        // 空串（清除字段）与空格分隔的合法格式都应通过
+        update(
+            &conn,
+            &task.id,
+            TaskPatch {
+                start_at: Some("".into()),
+                due_at: Some("2026-09-09 10:00:00".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn mark_notified_unknown_id_fails() {
+        let conn = memory();
+        assert_eq!(
+            mark_notified(&conn, "no-such-id").unwrap_err(),
+            "任务不存在"
+        );
+    }
+
+    #[test]
+    fn migrates_sort_order_for_legacy_db() {
+        let dir = std::env::temp_dir().join(format!("todo-legacy-db-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("todo.db");
+        {
+            // v0.2 之前的 tasks 表：没有 sort_order 列
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE tasks (
+                   id TEXT PRIMARY KEY,
+                   title TEXT NOT NULL,
+                   notes TEXT,
+                   status TEXT NOT NULL DEFAULT 'pending',
+                   priority TEXT NOT NULL DEFAULT 'normal',
+                   kind TEXT NOT NULL DEFAULT 'quick',
+                   start_at TEXT,
+                   due_at TEXT,
+                   completed_at TEXT,
+                   project_id TEXT,
+                   notified INTEGER NOT NULL DEFAULT 0,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL);
+                 INSERT INTO tasks (id, title, status, created_at, updated_at) VALUES
+                   ('a', '甲', 'pending', '2026-01-01T08:00:00', '2026-01-01T08:00:00'),
+                   ('b', '乙', 'pending', '2026-01-01T09:00:00', '2026-01-01T09:00:00'),
+                   ('c', '丙', 'pending', '2026-01-01T10:00:00', '2026-01-01T10:00:00');",
+            )
+            .unwrap();
+        }
+        let conn = open(&db_path).unwrap();
+        let rows = list(&conn).unwrap();
+        assert_eq!(rows.len(), 3);
+        let order_of = |id: &str| {
+            rows.iter()
+                .find(|task| task.id == id)
+                .map(|task| task.sort_order)
+                .unwrap()
+        };
+        assert!(order_of("a") < order_of("b"));
+        assert!(order_of("b") < order_of("c"));
+        drop(conn);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

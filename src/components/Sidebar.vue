@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import {
   CalendarDays,
   CheckSquare,
@@ -10,7 +10,6 @@ import {
   SquareKanban,
 } from "lucide-vue-next";
 import type { AppView } from "../types";
-import { useTasks } from "../composables/useTasks";
 import { useTile } from "../composables/useTile";
 
 defineProps<{
@@ -24,8 +23,9 @@ const emit = defineEmits<{
   navigate: [view: AppView];
 }>();
 
-const { error } = useTasks();
 const { tileOpen, init, toggle } = useTile();
+// 磁贴开关失败用本地错误条展示：不清除全局共享的错误横幅
+const tileError = ref("");
 
 let bannerTimer = 0;
 let pending = false;
@@ -38,17 +38,17 @@ onUnmounted(() => {
   window.clearTimeout(bannerTimer);
 });
 
-// 左下角按钮直接开关磁贴；失败写共享错误横幅，几秒后自动清除
+// 左下角按钮直接开关磁贴；失败几秒后自动清除
 async function toggleTile() {
   if (pending) return;
   pending = true;
   try {
     await toggle();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    tileError.value = err instanceof Error ? err.message : String(err);
     window.clearTimeout(bannerTimer);
     bannerTimer = window.setTimeout(() => {
-      error.value = "";
+      tileError.value = "";
     }, 4000);
   } finally {
     pending = false;
@@ -82,6 +82,7 @@ const items: { id: AppView; label: string; icon: typeof CalendarDays; count?: "t
         :key="item.id"
         class="nav-item"
         :class="{ active: current === item.id }"
+        :aria-current="current === item.id ? 'page' : undefined"
         type="button"
         @click="emit('navigate', item.id)"
       >
@@ -103,6 +104,7 @@ const items: { id: AppView; label: string; icon: typeof CalendarDays; count?: "t
     </nav>
 
     <div class="sidebar-footer">
+      <p v-if="tileError" class="error-banner" role="alert">{{ tileError }}</p>
       <button
         class="pin-btn"
         :class="{ active: tileOpen }"

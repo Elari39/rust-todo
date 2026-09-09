@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from "vue";
 import { Check, Pencil, Trash2, X } from "lucide-vue-next";
+import { useClock } from "../composables/useClock";
 import { useProjects } from "../composables/useProjects";
 import type { Task, TaskKind, TaskPriority } from "../types";
 import {
@@ -32,6 +33,7 @@ const emit = defineEmits<{
 }>();
 
 const { projects, nameOf } = useProjects();
+const clock = useClock();
 
 const editing = reactive({
   on: false,
@@ -44,24 +46,35 @@ const editing = reactive({
   projectId: "",
 });
 
-// 同时跟踪 updatedAt：任务在别处被更新（磁贴窗口、提醒标记）后表单重新同步，防止旧数据覆盖
+function syncForm() {
+  editing.title = props.task.title;
+  editing.notes = props.task.notes ?? "";
+  editing.priority = props.task.priority;
+  editing.kind = props.task.kind;
+  editing.startAt = toInputValue(props.task.startAt);
+  editing.dueAt = toInputValue(props.task.dueAt);
+  editing.projectId = props.task.projectId ?? "";
+}
+
+// 同时跟踪 updatedAt：任务在别处被更新（磁贴窗口、提醒标记）后表单重新同步，
+// 防止旧数据覆盖。正在编辑时跳过重置，保留用户输入不被远程变更清掉；
+// 保存完成后 updatedAt 变化会触发同步。
 watch(
   () => [props.task.id, props.task.updatedAt],
   () => {
-    editing.on = false;
-    editing.title = props.task.title;
-    editing.notes = props.task.notes ?? "";
-    editing.priority = props.task.priority;
-    editing.kind = props.task.kind;
-    editing.startAt = toInputValue(props.task.startAt);
-    editing.dueAt = toInputValue(props.task.dueAt);
-    editing.projectId = props.task.projectId ?? "";
+    if (editing.on) return;
+    syncForm();
   },
   { immediate: true },
 );
 
+function startEdit() {
+  syncForm();
+  editing.on = true;
+}
+
 const hours = computed(() => durationHours(props.task.startAt, props.task.dueAt));
-const overdue = computed(() => isOverdue(props.task));
+const overdue = computed(() => isOverdue(props.task, clock.value));
 const project = computed(() =>
   props.task.projectId ? projects.value.find((p) => p.id === props.task.projectId) : undefined,
 );
@@ -77,6 +90,10 @@ function save() {
     projectId: editing.projectId,
   });
   editing.on = false;
+}
+
+function removeWithConfirm() {
+  if (window.confirm("确定删除该任务？删除后无法恢复。")) emit("remove");
 }
 </script>
 
@@ -117,10 +134,10 @@ function save() {
           <Check :size="16" /> 标记完成
         </button>
         <button v-else class="btn btn-ghost" type="button" @click="emit('reopen')">重新打开</button>
-        <button class="btn btn-ghost" type="button" @click="editing.on = true">
+        <button class="btn btn-ghost" type="button" @click="startEdit">
           <Pencil :size="16" /> 编辑
         </button>
-        <button class="icon-btn danger" type="button" @click="emit('remove')">
+        <button class="icon-btn danger" type="button" title="删除任务" @click="removeWithConfirm">
           <Trash2 :size="16" />
         </button>
       </div>

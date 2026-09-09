@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { Check, Plus, X } from "lucide-vue-next";
+import { useClock } from "../composables/useClock";
 import { useTasks } from "../composables/useTasks";
 import {
   defaultDue,
@@ -9,10 +10,12 @@ import {
   fromInputValue,
   isOverdue,
   toInputValue,
+  toStamp,
 } from "../utils/datetime";
 
 const win = getCurrentWindow();
-const { todayTasks, error, create, complete, reopen, refresh } = useTasks();
+const { todayTasks, tasks, error, create, complete, reopen, refresh } = useTasks();
+const clock = useClock();
 
 const draft = ref("");
 const dueAt = ref(toInputValue(defaultDue()));
@@ -53,12 +56,16 @@ async function onTilePointerDown(event: PointerEvent) {
 function onTilePointerMove(event: PointerEvent) {
   if (!drag || event.pointerId !== drag.pointerId) return;
   const scale = window.devicePixelRatio || 1;
-  win.setPosition(
-    new PhysicalPosition(
-      drag.originX + Math.round(event.screenX * scale - drag.startX),
-      drag.originY + Math.round(event.screenY * scale - drag.startY),
-    ),
-  );
+  win
+    .setPosition(
+      new PhysicalPosition(
+        drag.originX + Math.round(event.screenX * scale - drag.startX),
+        drag.originY + Math.round(event.screenY * scale - drag.startY),
+      ),
+    )
+    .catch(() => {
+      // 窗口销毁瞬间 setPosition 可能被拒，拖动路径上无需打扰用户
+    });
 }
 
 function onTilePointerUp(event: PointerEvent) {
@@ -86,25 +93,30 @@ const openCount = computed(
 const FADE_DELAY = 2000;
 const hiddenIds = ref(new Set<string>());
 const fadeTimers = new Map<string, number>();
+// 已观察过的任务状态：只对观察到的迁移计时，
+// 磁贴启动时首次拉到的历史已完成任务直接视为已知，不进入淡出
+const knownStatuses = new Map<string, string>();
 
-const visibleTasks = computed(() =>
-  todayTasks.value.filter((task) => !hiddenIds.value.has(task.id)),
-);
+// todayTasks 不含已完成任务；淡出期间把它们追加到列表尾部短暂展示
+const visibleTasks = computed(() => {
+  const fading = tasks.value.filter(
+    (task) =>
+      task.status === "completed" &&
+      fadeTimers.has(task.id) &&
+      !hiddenIds.value.has(task.id),
+  );
+  return [...todayTasks.value, ...fading];
+});
 
-watch(todayTasks, (list) => {
+watch(tasks, (list) => {
   const statuses = new Map(list.map((task) => [task.id, task.status]));
-  for (const [id, timer] of fadeTimers) {
-    if (statuses.get(id) !== "completed") {
-      window.clearTimeout(timer);
-      fadeTimers.delete(id);
-      hiddenIds.value.delete(id);
-    }
-  }
   for (const task of list) {
+    const prev = knownStatuses.get(task.id);
     if (
       task.status === "completed" &&
-      !fadeTimers.has(task.id) &&
-      !hiddenIds.value.has(task.id)
+      prev !== undefined &&
+      prev !== "completed" &&
+      !fadeTimers.has(task.id)
     ) {
       fadeTimers.set(
         task.id,
@@ -115,19 +127,39 @@ watch(todayTasks, (list) => {
       );
     }
   }
-  for (const id of [...hiddenIds.value]) {
-    if (!statuses.has(id)) hiddenIds.value.delete(id);
+  for (const [id, timer] of fadeTimers) {
+    if (statuses.get(id) !== "completed") {
+      window.clearTimeout(timer);
+      fadeTimers.delete(id);
+      hiddenIds.value.delete(id);
+    }
   }
+  for (const id of [...hiddenIds.value]) {
+    // 已完成且淡出已结束的条目不再参与渲染，顺手清理避免集合无限增长
+    if (!statuses.has(id) || (!fadeTimers.has(id) && statuses.get(id) === "completed")) {
+      hiddenIds.value.delete(id);
+    }
+  }
+  knownStatuses.clear();
+  for (const [id, status] of statuses) knownStatuses.set(id, status);
 });
 
 async function add() {
   const title = draft.value.trim();
   if (!title) return;
-  await create({
-    title,
-    kind: "quick",
-    dueAt: fromInputValue(dueAt.value) ?? defaultDue(),
-  });
+  try {
+    await create({
+      title,
+      kind: "quick",
+      // 带上开始时间：否则「截止明天」的任务不满足今日列表的任何过滤条件，
+      // 创建后立即从磁贴消失
+      startAt: toStamp(new Date()),
+      dueAt: fromInputValue(dueAt.value) ?? defaultDue(),
+    });
+  } catch {
+    // 失败已在错误横幅展示；保留输入让用户直接重试
+    return;
+  }
   draft.value = "";
 }
 
@@ -186,8 +218,8 @@ async function toggle(id: string, done: boolean) {
           <span class="tile-title">{{ task.title }}</span>
           <span
             class="tile-due"
-            :class="{ late: isOverdue(task) }"
-          >{{ dueLabel(task.dueAt) }}</span>
+            :class="{ late: isOverdue(task, clock) }"
+          >{{ dueLabel(task.dueAt, clock) }}</span>
         </div>
       </li>
     </TransitionGroup>
