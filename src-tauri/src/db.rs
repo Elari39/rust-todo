@@ -378,8 +378,10 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
     // 改期或重开都让任务重新进入提醒流程：已提醒过的任务改了截止时间，
     // 不重置 notified 会导致新提醒永不触发
     let due_changed = patch.due_at.is_some() && due_at != current.due_at;
-    let reopened = matches!(patch.status.as_deref(), Some("pending") | Some("in_progress"))
-        && current.status == "completed";
+    let reopened = matches!(
+        patch.status.as_deref(),
+        Some("pending") | Some("in_progress")
+    ) && current.status == "completed";
     let notified = if due_changed || reopened {
         false
     } else {
@@ -403,9 +405,7 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
         }
         Some("completed") => ("completed".to_string(), Some(now_stamp())),
         // pending / in_progress 都是未完成态，清除完成时间
-        Some("pending") | Some("in_progress") => {
-            (patch.status.clone().unwrap(), None)
-        }
+        Some("pending") | Some("in_progress") => (patch.status.clone().unwrap(), None),
         Some(_) => return Err("无效的任务状态".into()),
         None => (current.status, current.completed_at),
     };
@@ -510,7 +510,10 @@ pub fn import_replace(
         if name.is_empty() {
             return Err("备份中的项目名不能为空".into());
         }
-        if project_rows.iter().any(|(_, existing, _, _)| *existing == name) {
+        if project_rows
+            .iter()
+            .any(|(_, existing, _, _)| *existing == name)
+        {
             return Err(format!("备份中的项目名重复: {name}"));
         }
         let id = match item.id.as_deref() {
@@ -547,10 +550,8 @@ pub fn import_replace(
         for stamp in [&item.start_at, &item.due_at, &item.completed_at] {
             validate_stamp(stamp.as_deref())?;
         }
-        for stamp in [&item.created_at, &item.updated_at] {
-            if let Some(value) = stamp {
-                validate_stamp(Some(value.as_str()))?;
-            }
+        for value in [&item.created_at, &item.updated_at].into_iter().flatten() {
+            validate_stamp(Some(value.as_str()))?;
         }
         let id = match item.id.as_deref() {
             Some(id) if !id.trim().is_empty() => id.trim().to_string(),
@@ -575,9 +576,7 @@ pub fn import_replace(
         let project_id = match item.project_id.as_deref() {
             Some(id) if !id.trim().is_empty() => {
                 if !project_ids.contains(&id.trim().to_string()) {
-                    return Err(format!(
-                        "备份中的任务「{title}」引用了不存在的项目"
-                    ));
+                    return Err(format!("备份中的任务「{title}」引用了不存在的项目"));
                 }
                 Some(id.trim().to_string())
             }
@@ -1238,7 +1237,10 @@ mod tests {
         let rows = list(&conn).unwrap();
         assert_eq!(rows.len(), 2);
         assert!(!rows.iter().any(|task| task.title == "旧任务"));
-        assert!(!list_projects(&conn).unwrap().iter().any(|p| p.name == "旧项目"));
+        assert!(!list_projects(&conn)
+            .unwrap()
+            .iter()
+            .any(|p| p.name == "旧项目"));
 
         let in_progress = rows.iter().find(|task| task.id == "task-1").unwrap();
         assert_eq!(in_progress.status, "in_progress");

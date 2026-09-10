@@ -263,7 +263,8 @@ pub fn data_dir(state: State<'_, AppState>) -> Result<String, String> {
 pub async fn export_backup(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<String, String> {    let db = Arc::clone(&state.db);
+) -> Result<String, String> {
+    let db = Arc::clone(&state.db);
     let settings = Arc::clone(&state.settings);
     let (tasks, projects, snapshot) = tauri::async_runtime::spawn_blocking(
         move || -> Result<(Vec<Task>, Vec<Project>, Settings), String> {
@@ -316,14 +317,13 @@ pub async fn import_backup(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<String, String> {
-    let payload =
-        tauri::async_runtime::spawn_blocking(move || -> Result<BackupPayload, String> {
-            let text = std::fs::read_to_string(&path)
-                .map_err(|err| format!("读取备份文件失败: {err}"))?;
-            serde_json::from_str(&text).map_err(|err| format!("备份文件格式无效: {err}"))
-        })
-        .await
-        .map_err(|err| err.to_string())??;
+    let payload = tauri::async_runtime::spawn_blocking(move || -> Result<BackupPayload, String> {
+        let text =
+            std::fs::read_to_string(&path).map_err(|err| format!("读取备份文件失败: {err}"))?;
+        serde_json::from_str(&text).map_err(|err| format!("备份文件格式无效: {err}"))
+    })
+    .await
+    .map_err(|err| err.to_string())??;
 
     let db = Arc::clone(&state.db);
     let (task_count, project_count) =
