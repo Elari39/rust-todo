@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 src-tauri/target
+src-tauri/gen
 coverage/
 
 # 数据库文件安全网：数据库正常在 %APPDATA%，绝不该出现在仓库里
@@ -35,8 +36,8 @@ coverage/
 .mimosa/
 .zcode/
 
-# 本地已知问题文档，不上传
-KNOWN-ISSUES.local.md
+# 本地笔记文档（*.*.local.md 命名约定），不上传
+*.local.md
 
 # 图标设计稿与预览页（成品图标已生成在 src-tauri/icons）
 .icon-design/
