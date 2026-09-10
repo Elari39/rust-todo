@@ -120,6 +120,9 @@ pub struct BackupProject {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupPayload {
+    // 标识备份来源：导入时校验，防止选错 JSON 文件清空现有数据
+    #[serde(default)]
+    pub app: Option<String>,
     #[serde(default)]
     pub version: Option<i64>,
     #[serde(default)]

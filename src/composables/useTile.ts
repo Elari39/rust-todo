@@ -10,8 +10,12 @@ async function init() {
   if (initialized) return;
   initialized = true;
   tileOpen.value = await api.tileState().catch(() => false);
-  // 磁贴还能从托盘菜单或磁贴自身的关闭按钮开关，窗口聚焦时同步真实状态；
-  // 监听随窗口存活，无需退订
+  // 磁贴的开关还可能来自托盘菜单或磁贴自身的关闭按钮：后端在开/关后
+  // 广播 tile-changed（payload 即最新状态），直接作为状态源；
+  // 聚焦时重查一次作兜底。监听随窗口存活，无需退订
+  await listen<boolean>("tile-changed", (event) => {
+    tileOpen.value = event.payload;
+  });
   await listen("tauri://focus", async () => {
     tileOpen.value = await api.tileState().catch(() => false);
   });

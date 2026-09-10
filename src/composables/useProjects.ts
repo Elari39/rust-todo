@@ -2,6 +2,9 @@ import { computed, ref } from "vue";
 import { api } from "../api";
 import type { Project } from "../types";
 import { t } from "../i18n";
+// 单向依赖：useTasks 不引用本模块，删除项目后借它刷新任务，
+// 清掉后端置空的 projectId，避免编辑时带着孤儿 ID 保存失败
+import { useTasks } from "./useTasks";
 
 // 模块级单例：主窗口内任意组件共享同一份项目数据
 const projects = ref<Project[]>([]);
@@ -53,6 +56,9 @@ export function useProjects() {
   async function remove(id: string) {
     await attempt(() => api.deleteProject(id));
     await refresh();
+    // 后端把该项目下的任务解绑后广播 tasks-changed，但 payload 是本窗口
+    // label 会被跳过（自己的变更自己刷），这里补拉任务拿到解绑后的数据
+    await useTasks().refresh();
   }
 
   const projectMap = computed(() => {

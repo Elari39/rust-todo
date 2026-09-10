@@ -35,8 +35,9 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
     match open_inner(path) {
         Ok(conn) => Ok(conn),
         Err(err) => {
-            // 数据库文件损坏时备份现场再重建，绝不让应用完全无法启动
-            if err.contains("file is not a database") && path.exists() {
+            // 数据库文件损坏时备份现场再重建，绝不让应用完全无法启动。
+            // 损坏形态不止一种：格式不识别与页结构损坏都走此路径
+            if (err.contains("not a database") || err.contains("malformed")) && path.exists() {
                 let file_name = path
                     .file_name()
                     .and_then(|name| name.to_str())
@@ -491,10 +492,14 @@ pub fn import_replace(
     conn: &mut Connection,
     payload: BackupPayload,
 ) -> Result<(usize, usize), String> {
-    if let Some(version) = payload.version {
-        if version != 1 {
-            return Err(format!("不支持的备份文件版本: {version}"));
-        }
+    // 备份整体替换会先清库，必须确认文件确属本应用，任意 JSON 一律拒绝
+    if payload.app.as_deref() != Some("todo") {
+        return Err("不是本应用的备份文件".into());
+    }
+    match payload.version {
+        Some(1) => {}
+        Some(version) => return Err(format!("不支持的备份文件版本: {version}")),
+        None => return Err("不支持的备份文件版本: 缺少版本号".into()),
     }
 
     // ---- 预校验并归一化项目 ----
@@ -1183,6 +1188,7 @@ mod tests {
 
         let project_id = Uuid::new_v4().to_string();
         let payload = BackupPayload {
+            app: Some("todo".into()),
             version: Some(1),
             projects: vec![BackupProject {
                 id: Some(project_id.clone()),
@@ -1245,6 +1251,7 @@ mod tests {
 
         // 非法引用整体拒绝：库里保留原数据
         let bad = BackupPayload {
+            app: Some("todo".into()),
             version: Some(1),
             projects: vec![],
             tasks: vec![BackupTask {
@@ -1270,10 +1277,37 @@ mod tests {
 
         // 版本号不支持时拒绝
         let future = BackupPayload {
+            app: Some("todo".into()),
             version: Some(2),
             projects: vec![],
             tasks: vec![],
         };
         assert!(import_replace(&mut conn, future).is_err());
+    }
+
+    #[test]
+    fn import_replace_rejects_foreign_payload() {
+        let mut conn = memory();
+        insert_project(&conn, "旧项目", "#123456").unwrap();
+        insert(&conn, bare_new("旧任务")).unwrap();
+
+        // 缺少来源标识（比如任意的 JSON 文件）必须拒绝，且不动现有数据
+        let no_app = BackupPayload {
+            app: None,
+            version: Some(1),
+            projects: vec![],
+            tasks: vec![],
+        };
+        assert!(import_replace(&mut conn, no_app).is_err());
+        let wrong_app = BackupPayload {
+            app: Some("other".into()),
+            version: Some(1),
+            projects: vec![],
+            tasks: vec![],
+        };
+        assert!(import_replace(&mut conn, wrong_app).is_err());
+
+        assert_eq!(list(&conn).unwrap().len(), 1);
+        assert_eq!(list_projects(&conn).unwrap().len(), 1);
     }
 }

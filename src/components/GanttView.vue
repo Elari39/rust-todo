@@ -27,7 +27,7 @@ interface GanttGroup {
   rows: GanttRow[];
 }
 
-const { projectMap } = useProjects();
+const { projects, projectMap } = useProjects();
 
 // 与「未来 horizon 天」窗口有交集的任务按项目分组；
 // 组内按条形起点排序，时间线自上而下递进
@@ -67,11 +67,15 @@ const groups = computed<GanttGroup[]>(() => {
       rows: rows.sort((a, b) => a.left - b.left || b.width - a.width),
     });
   }
-  // 已建项目按建库顺序在前，未分组固定垫底
+  // 已建项目按建库顺序在前（projects 列表即建库顺序），未分组固定垫底
+  const orderOf = (key: string) => {
+    const index = projects.value.findIndex((project) => project.id === key);
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
   result.sort((a, b) => {
     if (a.key === "ungrouped") return 1;
     if (b.key === "ungrouped") return -1;
-    return a.key.localeCompare(b.key);
+    return orderOf(a.key) - orderOf(b.key);
   });
   return result;
 });

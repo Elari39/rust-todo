@@ -141,7 +141,7 @@ onMounted(() => {
               {{ project ? project.name : t("all.title") }}
             </h1>
             <p class="page-sub">
-              {{ project ? t("all.projectKicker") : tf("proj.count", { n: tasks.length }) }}
+              {{ project ? t("all.projectKicker") : tf("all.taskCount", { n: tasks.length }) }}
             </p>
           </div>
           <div class="page-actions">

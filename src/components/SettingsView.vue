@@ -37,7 +37,7 @@ onMounted(async () => {
   autoStart.value = await isEnabled().catch(() => false);
   dir.value = await api.dataDir().catch(() => "");
   version.value = await getVersion().catch(() => "");
-  void init();
+  void init().catch(() => {});
 });
 
 onUnmounted(() => {

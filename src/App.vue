@@ -52,10 +52,13 @@ const activeProjectId = ref<string | null>(null);
 const now = useClock();
 const titleBarRef = ref<InstanceType<typeof TitleBar> | null>(null);
 
-// 标题栏全局搜索：输入即进入「全部任务」并按内容过滤
+// 标题栏全局搜索：输入即进入「全部任务」并按内容过滤。
+// 搜索是全局的——先脱离遗留的项目过滤，否则结果会被悄悄收窄到单个项目
 const searchQuery = ref("");
 watch(searchQuery, (value) => {
-  if (value.trim() && view.value !== "all") navigate("all");
+  if (!value.trim()) return;
+  activeProjectId.value = null;
+  if (view.value !== "all") navigate("all");
 });
 
 onMounted(() => {
@@ -92,7 +95,9 @@ async function createQuick(payload: { title: string; kind: TaskKind; dueAt: stri
 
 function navigate(next: AppView) {
   view.value = next;
-  if (next !== "all") activeProjectId.value = null;
+  // 点侧栏「全部任务」或任意导航都算显式离开项目视图；
+  // 项目过滤只经 openProject / AllTasksView 的 clear-project 设置
+  activeProjectId.value = null;
 }
 
 function openProject(id: string) {
@@ -100,9 +105,10 @@ function openProject(id: string) {
   view.value = "all";
 }
 
-/** 任务详情里的状态流转：开始任务 / 标记未开始 */
+/** 任务详情里的状态流转：开始任务 / 标记未开始。
+ * 失败已写入全局错误横幅，这里只消掉 rejection 噪音 */
 function setStatus(status: TaskStatus) {
-  if (selected.value) void update(selected.value.id, { status });
+  if (selected.value) void update(selected.value.id, { status }).catch(() => {});
 }
 </script>
 

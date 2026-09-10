@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
   CalendarDays,
   CalendarRange,
@@ -32,7 +32,7 @@ let bannerTimer = 0;
 let pending = false;
 
 onMounted(() => {
-  void init();
+  void init().catch(() => {});
 });
 
 onUnmounted(() => {
@@ -56,14 +56,15 @@ async function toggleTile() {
   }
 }
 
-const items: { id: AppView; label: string; icon: typeof CalendarDays; count?: "today" | "all" | "projects" }[] = [
+// computed 而非常量：词条取值跟随 i18n 响应式 locale，切换语言时导航同步更新
+const items = computed<{ id: AppView; label: string; icon: typeof CalendarDays; count?: "today" | "all" | "projects" }[]>(() => [
   { id: "today", label: t("nav.today"), icon: CalendarRange, count: "today" },
   { id: "all", label: t("nav.all"), icon: CheckSquare, count: "all" },
   { id: "calendar", label: t("nav.calendar"), icon: CalendarDays },
   { id: "gantt", label: t("nav.gantt"), icon: GanttChart },
   { id: "projects", label: t("nav.projects"), icon: SquareKanban, count: "projects" },
   { id: "settings", label: t("nav.settings"), icon: Settings },
-];
+]);
 </script>
 
 <template>

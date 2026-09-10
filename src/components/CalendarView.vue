@@ -94,8 +94,9 @@ function createForDay() {
 }
 
 function toggleTask(task: Task) {
-  if (task.status === "completed") void reopen(task.id);
-  else void complete(task.id);
+  // 失败已写入全局错误横幅，这里只消掉 rejection 噪音
+  if (task.status === "completed") void reopen(task.id).catch(() => {});
+  else void complete(task.id).catch(() => {});
 }
 </script>
 

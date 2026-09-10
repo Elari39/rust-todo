@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Emitter, Manager,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -27,8 +27,8 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 if window.label() != "main" {
                     return;
                 }
@@ -43,6 +43,14 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+            // 磁贴可被自身 × 按钮或 toggle_tile_window 直接关闭，销毁后广播
+            // 状态，设置页/侧栏的开关才能与真实状态保持同步
+            tauri::WindowEvent::Destroyed => {
+                if window.label() == "tile" {
+                    let _ = window.app_handle().emit("tile-changed", false);
+                }
+            }
+            _ => {}
         })
         .setup(|app| {
             let dir = app.path().app_data_dir()?;

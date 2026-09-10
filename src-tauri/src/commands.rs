@@ -84,6 +84,9 @@ pub fn toggle_tile_inner(app: &tauri::AppHandle) -> Result<bool, String> {
         .background_color(tauri::utils::config::Color(237, 242, 251, 255))
         .build()
         .map_err(|err| err.to_string())?;
+    // 广播给所有窗口，让设置页/侧栏的磁贴开关同步（关闭路径由
+    // lib.rs 的 Destroyed 事件兜底）
+    let _ = app.emit("tile-changed", true);
     Ok(true)
 }
 
@@ -304,7 +307,8 @@ pub async fn export_backup(
     .map_err(|err| err.to_string())?
 }
 
-/// 导入备份：文件读取与解析都放进 with_db 的阻塞线程，避免冻结 UI。
+/// 导入备份：文件读取与解析先在阻塞线程完成（不持 DB 锁），避免磁盘慢时
+/// 卡住其他窗口的数据库命令；通过后再进入事务整体替换。
 /// 返回导入的任务/项目数量描述，供前端提示。
 #[tauri::command]
 pub async fn import_backup(
@@ -312,15 +316,18 @@ pub async fn import_backup(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<String, String> {
+    let payload =
+        tauri::async_runtime::spawn_blocking(move || -> Result<BackupPayload, String> {
+            let text = std::fs::read_to_string(&path)
+                .map_err(|err| format!("读取备份文件失败: {err}"))?;
+            serde_json::from_str(&text).map_err(|err| format!("备份文件格式无效: {err}"))
+        })
+        .await
+        .map_err(|err| err.to_string())??;
+
     let db = Arc::clone(&state.db);
-    let (task_count, project_count) = with_db(&db, move |conn| {
-        let text =
-            std::fs::read_to_string(&path).map_err(|err| format!("读取备份文件失败: {err}"))?;
-        let payload: BackupPayload =
-            serde_json::from_str(&text).map_err(|err| format!("备份文件格式无效: {err}"))?;
-        db::import_replace(conn, payload)
-    })
-    .await?;
+    let (task_count, project_count) =
+        with_db(&db, move |conn| db::import_replace(conn, payload)).await?;
     emit_tasks_changed(&window);
     Ok(format!("{task_count} 个任务、{project_count} 个项目"))
 }

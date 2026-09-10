@@ -56,7 +56,6 @@ export const zhCN = {
   "task.overdue": "已超期",
   "task.completed": "已完成",
   "task.inProgress": "进行中",
-  "task.pending": "未开始",
   "priority.high": "紧急",
   "priority.normal": "一般",
   "priority.low": "较低",
@@ -78,9 +77,6 @@ export const zhCN = {
   "detail.confirmDelete": "确定删除该任务？删除后无法恢复。",
   "form.titlePlaceholder": "任务标题",
   "form.notesPlaceholder": "备注",
-  "form.project": "项目",
-  "form.priority": "优先级",
-  "form.kind": "类型",
 
   // 新建任务弹窗
   "modal.createTitle": "新建任务",
@@ -110,9 +106,9 @@ export const zhCN = {
   "all.emptyAll": "这里还空着，先加一条。",
   "all.projectKicker": "项目跟踪",
   "all.backToAll": "返回全部任务",
+  "all.taskCount": "{n} 个任务",
 
   // 日历
-  "cal.kicker": "日历",
   "cal.prev": "上个月",
   "cal.next": "下个月",
   "cal.todayBtn": "今天",
@@ -127,7 +123,6 @@ export const zhCN = {
   "gantt.empty": "还没有带时间范围的任务。",
 
   // 项目跟踪
-  "proj.kicker": "项目跟踪",
   "proj.title": "项目跟踪",
   "proj.count": "{n} 个项目",
   "proj.hint": "删除项目不会删除任务，项目下的任务会回到未分组。",
@@ -144,7 +139,6 @@ export const zhCN = {
   "proj.confirmDelete": "删除项目「{name}」？项目下的任务会变为未分组。",
 
   // 设置
-  "set.kicker": "设置",
   "set.title": "设置",
   "set.subtitle": "改动即时生效，设置保存在本机。",
   "set.general": "通用设置",
