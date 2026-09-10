@@ -45,10 +45,8 @@ pub fn run() {
             }
             // 磁贴可被自身 × 按钮或 toggle_tile_window 直接关闭，销毁后广播
             // 状态，设置页/侧栏的开关才能与真实状态保持同步
-            tauri::WindowEvent::Destroyed => {
-                if window.label() == "tile" {
-                    let _ = window.app_handle().emit("tile-changed", false);
-                }
+            tauri::WindowEvent::Destroyed if window.label() == "tile" => {
+                let _ = window.app_handle().emit("tile-changed", false);
             }
             _ => {}
         })
