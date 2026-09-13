@@ -29,6 +29,7 @@ import TaskDetail from "./TaskDetail.vue";
 const props = defineProps<{
   now: Date;
   tasks: Task[];
+  completedTasks: Task[];
   selected: Task | null;
   onCreate: (payload: { title: string; kind: TaskKind; dueAt: string }) => Promise<void>;
 }>();
@@ -75,7 +76,7 @@ const nearest = computed(() => {
 const stats = computed(() => ({
   pending: props.tasks.filter((task) => task.status === "pending").length,
   active: props.tasks.filter((task) => task.status === "in_progress").length,
-  done: props.tasks.filter((task) => task.status === "completed").length,
+  done: props.completedTasks.length,
 }));
 
 // 分组与设计图一致：重要及紧急 → 进行中 → 今天 → 已完成；
@@ -112,7 +113,7 @@ const groups = computed(() => {
       label: t("today.groupDone"),
       icon: CircleCheck,
       tone: "green",
-      tasks: props.tasks.filter((task) => task.status === "completed"),
+      tasks: props.completedTasks,
     },
   ].filter((group) => group.tasks.length > 0);
 });
@@ -174,7 +175,7 @@ async function submit(kind: TaskKind) {
         </div>
 
         <div class="page-scroll">
-          <p v-if="!tasks.length" class="empty">{{ t("today.empty") }}</p>
+          <p v-if="!tasks.length && !completedTasks.length" class="empty">{{ t("today.empty") }}</p>
           <section v-for="group in groups" :key="group.key" class="group">
             <div class="group-head">
               <span class="group-ico" :class="group.tone">
@@ -249,7 +250,7 @@ async function submit(kind: TaskKind) {
         @complete="emit('complete', selected.id)"
         @reopen="emit('reopen', selected.id)"
         @remove="emit('remove', selected.id)"
-        @save="(patch) => selected && emit('save', selected.id, patch)"
+        @save="(id, patch) => emit('save', id, patch)"
         @status="(status) => emit('status', status)"
       />
     </div>

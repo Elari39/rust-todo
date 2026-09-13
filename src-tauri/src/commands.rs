@@ -161,6 +161,48 @@ pub async fn mark_notified(
     Ok(task)
 }
 
+/// 插件的 show() 内部丢弃系统发送错误；直接等待底层调用，成功后前端才标记已提醒。
+#[tauri::command]
+pub async fn send_notification(
+    window: tauri::WebviewWindow,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("仅主窗口可发送提醒".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut notification = notify_rust::Notification::new();
+        notification.summary(&title).body(&body).auto_icon();
+        #[cfg(windows)]
+        {
+            // 保持原插件的标识规则：本地构建使用系统默认标识，安装后使用应用标识。
+            let exe = tauri::utils::platform::current_exe().map_err(|err| err.to_string())?;
+            let local_build = exe.parent().is_some_and(|dir| {
+                dir.ends_with("target/debug") || dir.ends_with("target/release")
+            });
+            if !local_build {
+                notification.app_id(&window.app_handle().config().identifier);
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let identifier = if tauri::is_dev() {
+                "com.apple.Terminal"
+            } else {
+                &window.app_handle().config().identifier
+            };
+            notify_rust::set_application(identifier).map_err(|err| err.to_string())?;
+        }
+        notification
+            .show()
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
 #[tauri::command]
 pub async fn reorder_tasks(
     window: tauri::WebviewWindow,

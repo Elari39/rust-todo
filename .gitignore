@@ -39,5 +39,9 @@ coverage/
 # 本地笔记文档（*.*.local.md 命名约定），不上传
 *.local.md
 
+# 本机审查与修复记录，包含绝对路径和临时验证产物链接
+/Todo-代码审查报告-*.md
+/Todo-修复验证记录-*.md
+
 # 图标设计稿与预览页（成品图标已生成在 src-tauri/icons）
 .icon-design/

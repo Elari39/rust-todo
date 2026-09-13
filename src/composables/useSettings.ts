@@ -11,6 +11,7 @@ const settings = ref<AppSettings>({
 });
 const loaded = ref(false);
 const loadError = ref("");
+let saveQueue: Promise<void> = Promise.resolve();
 
 export function useSettings() {
   async function load(force = false) {
@@ -26,15 +27,23 @@ export function useSettings() {
     }
   }
 
-  async function save(next: AppSettings) {
-    const saved = await api.saveSettings({
-      closeToTray: next.closeToTray,
-      notificationLeadMinutes: Math.max(0, Math.min(720, Math.round(next.notificationLeadMinutes || 0))),
-      locale: next.locale || "zh-CN",
+  function save(patch: Partial<AppSettings>) {
+    const changes = { ...patch };
+    // 调用方只提交本次修改；轮到本次写入时再合并最新状态，避免捕获旧快照。
+    const pending = saveQueue.then(async () => {
+      const next = { ...settings.value, ...changes };
+      const saved = await api.saveSettings({
+        closeToTray: next.closeToTray,
+        notificationLeadMinutes: Math.max(0, Math.min(720, Math.round(next.notificationLeadMinutes || 0))),
+        locale: next.locale || "zh-CN",
+      });
+      settings.value = saved;
+      setLocale(saved.locale === "zh-CN" ? saved.locale : "zh-CN");
+      return saved;
     });
-    settings.value = saved;
-    setLocale(saved.locale === "zh-CN" ? saved.locale : "zh-CN");
-    return saved;
+    // 失败仍向当前调用方抛出，但不能阻塞队列中后续的设置保存。
+    saveQueue = pending.then(() => {}, () => {});
+    return pending;
   }
 
   return { settings, loaded, loadError, load, save };

@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "../api";
 import type { NewTask, Task, TaskPatch, TaskStatus } from "../types";
 import { useClock } from "./useClock";
-import { isOverdue, overlapsToday } from "../utils/datetime";
+import { isOverdue, isTodayStamp, overlapsToday } from "../utils/datetime";
 
 // 模块级单例：同一窗口内共享同一份任务状态（磁贴窗口复用同一前端，也只拉取一次）
 const tasks = ref<Task[]>([]);
@@ -22,6 +22,12 @@ const pending = computed(() => tasks.value.filter((task) => task.status !== "com
 const todayTasks = computed(() =>
   tasks.value.filter(
     (task) => overlapsToday(task, clock.value) || isOverdue(task, clock.value),
+  ),
+);
+// 完成统计按实际完成日期计算，独立于磁贴和待办列表的时间筛选。
+const todayCompletedTasks = computed(() =>
+  tasks.value.filter(
+    (task) => task.status === "completed" && isTodayStamp(task.completedAt, clock.value),
   ),
 );
 const todayCount = computed(
@@ -155,6 +161,7 @@ export function useTasks() {
     selectedId,
     pending,
     todayTasks,
+    todayCompletedTasks,
     todayCount,
     refresh,
     create,

@@ -49,6 +49,7 @@ export interface NewTask {
   projectId?: string | null;
 }
 
+/** 可空字段：省略表示保持原值，null 表示清空。 */
 export interface TaskPatch {
   title?: string;
   notes?: string | null;
@@ -57,6 +58,6 @@ export interface TaskPatch {
   startAt?: string | null;
   dueAt?: string | null;
   status?: TaskStatus;
-  /** 空字符串表示移出项目 */
+  /** null 或空字符串表示移出项目 */
   projectId?: string | null;
 }

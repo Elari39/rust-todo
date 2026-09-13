@@ -60,7 +60,6 @@ async function saveLead() {
   busy.value = "lead";
   try {
     const saved = await save({
-      ...settings.value,
       notificationLeadMinutes: Number(leadInput.value) || 0,
     });
     leadInput.value = String(saved.notificationLeadMinutes);
@@ -76,7 +75,7 @@ async function changeLocale(event: Event) {
   const value = (event.target as HTMLSelectElement).value as Locale;
   busy.value = "locale";
   try {
-    await save({ ...settings.value, locale: value });
+    await save({ locale: value });
     setLocale(value);
   } catch (err) {
     flash(fail(err));
@@ -99,7 +98,7 @@ async function toggleTile() {
 async function toggleCloseToTray() {
   busy.value = "tray";
   try {
-    await save({ ...settings.value, closeToTray: !settings.value.closeToTray });
+    await save({ closeToTray: !settings.value.closeToTray });
   } catch (err) {
     flash(fail(err));
   } finally {

@@ -2,8 +2,8 @@ import { onUnmounted, watch, type Ref } from "vue";
 import {
   isPermissionGranted,
   requestPermission,
-  sendNotification,
 } from "@tauri-apps/plugin-notification";
+import { api } from "../api";
 import type { Task } from "../types";
 import { parseStamp } from "../utils/datetime";
 import { isDueForNotification } from "../utils/reminders";
@@ -49,7 +49,7 @@ export function useReminders(
         if (due === null || !isDueForNotification(dueMs, nowMs, leadMs)) continue;
         const overdue = due.getTime() < nowMs;
         try {
-          await sendNotification({
+          await api.sendNotification({
             title: overdue ? t("notify.overdueTitle") : t("notify.dueSoonTitle"),
             body: `${task.title} · ${overdue ? t("notify.overdueBody") : tf("notify.soonBody", { n: leadMinutes.value })}`,
           });

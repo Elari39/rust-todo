@@ -218,7 +218,7 @@ onMounted(() => {
         @complete="emit('complete', selected.id)"
         @reopen="emit('reopen', selected.id)"
         @remove="emit('remove', selected.id)"
-        @save="(patch) => selected && emit('save', selected.id, patch)"
+        @save="(id, patch) => emit('save', id, patch)"
         @status="(status) => emit('status', status)"
       />
     </div>

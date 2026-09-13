@@ -344,17 +344,7 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
     if title.is_empty() {
         return Err("标题不能为空".into());
     }
-    let notes = match patch.notes {
-        Some(value) => {
-            let trimmed = value.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        }
-        None => current.notes,
-    };
+    let notes = patch.notes.map(empty_to_none).unwrap_or(current.notes);
     let priority = patch
         .priority
         .as_deref()
@@ -365,19 +355,19 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
         .as_deref()
         .map(normalize_kind)
         .unwrap_or(current.kind);
-    validate_stamp(patch.start_at.as_deref())?;
-    validate_stamp(patch.due_at.as_deref())?;
-    let start_at = match patch.start_at {
-        Some(ref value) => empty_to_none(Some(value.clone())),
-        None => current.start_at.clone(),
-    };
-    let due_at = match patch.due_at {
-        Some(ref value) => empty_to_none(Some(value.clone())),
-        None => current.due_at.clone(),
-    };
+    validate_stamp(patch.start_at.as_ref().and_then(|value| value.as_deref()))?;
+    validate_stamp(patch.due_at.as_ref().and_then(|value| value.as_deref()))?;
+    let start_at = patch
+        .start_at
+        .map(empty_to_none)
+        .unwrap_or(current.start_at);
+    let due_at = patch
+        .due_at
+        .map(empty_to_none)
+        .unwrap_or_else(|| current.due_at.clone());
     // 改期或重开都让任务重新进入提醒流程：已提醒过的任务改了截止时间，
     // 不重置 notified 会导致新提醒永不触发
-    let due_changed = patch.due_at.is_some() && due_at != current.due_at;
+    let due_changed = due_at != current.due_at;
     let reopened = matches!(
         patch.status.as_deref(),
         Some("pending") | Some("in_progress")
@@ -388,14 +378,12 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
         current.notified
     };
     // 只校验显式传入的 project_id；存量数据里的孤儿引用不阻塞后续编辑
-    if let Some(value) = patch.project_id.as_deref() {
-        if !value.trim().is_empty() {
-            ensure_project_exists(conn, Some(value))?;
-        }
-    }
     let project_id = match patch.project_id {
-        Some(value) if value.trim().is_empty() => None,
-        Some(value) => Some(value),
+        Some(value) => {
+            let project_id = empty_to_none(value);
+            ensure_project_exists(conn, project_id.as_deref())?;
+            project_id
+        }
         None => current.project_id,
     };
     let (status, completed_at) = match patch.status.as_deref() {
@@ -894,6 +882,108 @@ mod tests {
     }
 
     #[test]
+    fn nullable_patch_distinguishes_missing_null_and_value() {
+        let conn = memory();
+        let project = insert_project(&conn, "工作", "#3D5BDB").unwrap();
+        let task = insert(
+            &conn,
+            NewTask {
+                notes: Some("原备注".into()),
+                start_at: Some("2026-09-13T09:00:00".into()),
+                due_at: Some("2026-09-13T18:40:00".into()),
+                project_id: Some(project.id.clone()),
+                ..bare_new("任务")
+            },
+        )
+        .unwrap();
+        mark_notified(&conn, &task.id).unwrap();
+
+        let unchanged = update(
+            &conn,
+            &task.id,
+            serde_json::from_str(r#"{"title":"改名"}"#).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(unchanged.notes, task.notes);
+        assert_eq!(unchanged.start_at, task.start_at);
+        assert_eq!(unchanged.due_at, task.due_at);
+        assert_eq!(unchanged.project_id, task.project_id);
+        assert!(unchanged.notified);
+
+        let cleared = update(
+            &conn,
+            &task.id,
+            serde_json::from_str(r#"{"notes":null,"startAt":null,"dueAt":null,"projectId":null}"#)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cleared.notes, None);
+        assert_eq!(cleared.start_at, None);
+        assert_eq!(cleared.due_at, None);
+        assert_eq!(cleared.project_id, None);
+        assert!(!cleared.notified);
+
+        let updated = update(
+            &conn,
+            &task.id,
+            serde_json::from_value(serde_json::json!({
+                "notes": " 新备注 ",
+                "startAt": "2026-09-14T10:00:00",
+                "dueAt": "2026-09-14T19:00:00",
+                "projectId": project.id,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(updated.notes.as_deref(), Some("新备注"));
+        assert_eq!(updated.start_at.as_deref(), Some("2026-09-14T10:00:00"));
+        assert_eq!(updated.due_at.as_deref(), Some("2026-09-14T19:00:00"));
+        assert_eq!(updated.project_id, Some(project.id));
+
+        // 保留旧客户端以空字符串清空的兼容性。
+        let empty = update(
+            &conn,
+            &task.id,
+            serde_json::from_str(r#"{"notes":" ","startAt":"","dueAt":"","projectId":""}"#)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(empty.notes, None);
+        assert_eq!(empty.start_at, None);
+        assert_eq!(empty.due_at, None);
+        assert_eq!(empty.project_id, None);
+    }
+
+    #[test]
+    fn invalid_nullable_patch_preserves_existing_task() {
+        let conn = memory();
+        let task = insert(
+            &conn,
+            NewTask {
+                notes: Some("保留备注".into()),
+                due_at: Some("2026-09-13T18:40:00".into()),
+                ..bare_new("保留任务")
+            },
+        )
+        .unwrap();
+        for text in [
+            r#"{"notes":null,"dueAt":"invalid"}"#,
+            r#"{"notes":null,"projectId":"unknown"}"#,
+            r#"{"notes":42}"#,
+            r#"{"dueAt":[]}"#,
+        ] {
+            let result = serde_json::from_str::<TaskPatch>(text)
+                .map_err(|err| err.to_string())
+                .and_then(|patch| update(&conn, &task.id, patch));
+            assert!(result.is_err(), "应拒绝补丁: {text}");
+            assert_eq!(
+                serde_json::to_value(get(&conn, &task.id).unwrap()).unwrap(),
+                serde_json::to_value(&task).unwrap(),
+            );
+        }
+    }
+
+    #[test]
     fn seeds_only_on_fresh_database() {
         let dir = std::env::temp_dir().join(format!("todo-db-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -970,7 +1060,7 @@ mod tests {
             &conn,
             &task.id,
             TaskPatch {
-                project_id: Some("not-a-project".into()),
+                project_id: Some(Some("not-a-project".into())),
                 ..Default::default()
             },
         )
@@ -980,7 +1070,7 @@ mod tests {
             &conn,
             &task.id,
             TaskPatch {
-                project_id: Some(project.id.clone()),
+                project_id: Some(Some(project.id.clone())),
                 ..Default::default()
             },
         )
@@ -1007,7 +1097,7 @@ mod tests {
             &conn,
             &task.id,
             TaskPatch {
-                due_at: Some("2026-12-01T09:00:00".into()),
+                due_at: Some(Some("2026-12-01T09:00:00".into())),
                 ..Default::default()
             },
         )
@@ -1059,7 +1149,7 @@ mod tests {
             &conn,
             &task.id,
             TaskPatch {
-                start_at: Some("2026/09/09 10:00".into()),
+                start_at: Some(Some("2026/09/09 10:00".into())),
                 ..Default::default()
             },
         )
@@ -1071,8 +1161,8 @@ mod tests {
             &conn,
             &task.id,
             TaskPatch {
-                start_at: Some("".into()),
-                due_at: Some("2026-09-09 10:00:00".into()),
+                start_at: Some(Some("".into())),
+                due_at: Some(Some("2026-09-09 10:00:00".into())),
                 ..Default::default()
             },
         )
@@ -1285,6 +1375,54 @@ mod tests {
             tasks: vec![],
         };
         assert!(import_replace(&mut conn, future).is_err());
+    }
+
+    #[test]
+    fn invalid_backup_json_preserves_existing_data() {
+        let mut conn = memory();
+        seed_projects(&conn).unwrap();
+        seed_tasks(&conn).unwrap();
+        let tasks_before = serde_json::to_value(list(&conn).unwrap()).unwrap();
+        let projects_before = serde_json::to_value(list_projects(&conn).unwrap()).unwrap();
+
+        for text in [
+            r#"{"app":"todo","version":1}"#,
+            r#"{"app":"todo","version":1,"tasks":[]}"#,
+            r#"{"app":"todo","version":1,"projects":[]}"#,
+            r#"{"app":"todo","version":1,"tasks":null,"projects":[]}"#,
+            r#"{"app":"todo","version":1,"tasks":[],"projects":null}"#,
+            r#"{"app":"todo","version":1,"tasks":{},"projects":[]}"#,
+            r#"{"app":"todo","version":1,"tasks":[],"projects":""}"#,
+            r#"{"app":"todo","version":1,"tasks":[{"title":" "}],"projects":[]}"#,
+            r#"{"app":"todo","version":1,"tasks":[],"projects":[{"name":" "}]}"#,
+            r#"{"app":"todo","version":1,"tasks":[{"title":"孤儿","projectId":"unknown"}],"projects":[]}"#,
+        ] {
+            let result = serde_json::from_str::<BackupPayload>(text)
+                .map_err(|err| err.to_string())
+                .and_then(|payload| import_replace(&mut conn, payload));
+            assert!(result.is_err(), "应拒绝备份: {text}");
+            assert_eq!(
+                serde_json::to_value(list(&conn).unwrap()).unwrap(),
+                tasks_before
+            );
+            assert_eq!(
+                serde_json::to_value(list_projects(&conn).unwrap()).unwrap(),
+                projects_before,
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_empty_backup_can_replace_existing_data() {
+        let mut conn = memory();
+        seed_projects(&conn).unwrap();
+        seed_tasks(&conn).unwrap();
+        let payload =
+            serde_json::from_str(r#"{"app":"todo","version":1,"tasks":[],"projects":[]}"#).unwrap();
+
+        assert_eq!(import_replace(&mut conn, payload).unwrap(), (0, 0));
+        assert!(list(&conn).unwrap().is_empty());
+        assert!(list_projects(&conn).unwrap().is_empty());
     }
 
     #[test]

@@ -8,9 +8,12 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(() => ({
   plugins: [vue()],
 
-  // vitest：纯逻辑测试跑 node 环境即可（组件测试将来需要换成 jsdom/happy-dom）
+  // 逻辑测试与使用 Vue 自定义渲染器的组件回归测试均在 node 环境运行。
   test: {
     environment: "node",
+    testTransformMode: {
+      web: ["**/components/**/*.test.ts"],
+    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

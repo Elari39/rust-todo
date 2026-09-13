@@ -44,13 +44,26 @@ pub struct NewTask {
 #[serde(rename_all = "camelCase")]
 pub struct TaskPatch {
     pub title: Option<String>,
-    pub notes: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub notes: Option<Option<String>>,
     pub priority: Option<String>,
     pub kind: Option<String>,
-    pub start_at: Option<String>,
-    pub due_at: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub start_at: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub due_at: Option<Option<String>>,
     pub status: Option<String>,
-    pub project_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_nullable")]
+    pub project_id: Option<Option<String>>,
+}
+
+/// 缺省字段保持 None，显式 null 为 Some(None)，有值为 Some(Some(value))。
+fn deserialize_nullable<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,8 +138,7 @@ pub struct BackupPayload {
     pub app: Option<String>,
     #[serde(default)]
     pub version: Option<i64>,
-    #[serde(default)]
+    // 数据数组必须显式存在；缺字段不能被当作允许清库的空备份。
     pub tasks: Vec<BackupTask>,
-    #[serde(default)]
     pub projects: Vec<BackupProject>,
 }

@@ -3,7 +3,7 @@ import { computed, reactive, watch } from "vue";
 import { Check, Pencil, Play, RotateCcw, Trash2, X } from "lucide-vue-next";
 import { useClock } from "../composables/useClock";
 import { useProjects } from "../composables/useProjects";
-import type { Task, TaskKind, TaskPriority, TaskStatus } from "../types";
+import type { Task, TaskKind, TaskPatch, TaskPriority, TaskStatus } from "../types";
 import {
   durationHours,
   formatDate,
@@ -23,15 +23,7 @@ const emit = defineEmits<{
   reopen: [];
   remove: [];
   status: [status: TaskStatus];
-  save: [patch: {
-    title: string;
-    notes: string | null;
-    priority: TaskPriority;
-    kind: TaskKind;
-    startAt: string | null;
-    dueAt: string | null;
-    projectId: string;
-  }];
+  save: [id: string, patch: TaskPatch];
 }>();
 
 const { projects, nameOf } = useProjects();
@@ -39,6 +31,7 @@ const clock = useClock();
 
 const editing = reactive({
   on: false,
+  taskId: "",
   title: "",
   notes: "",
   priority: "normal" as TaskPriority,
@@ -49,6 +42,7 @@ const editing = reactive({
 });
 
 function syncForm() {
+  editing.taskId = props.task.id;
   editing.title = props.task.title;
   editing.notes = props.task.notes ?? "";
   editing.priority = props.task.priority;
@@ -58,12 +52,11 @@ function syncForm() {
   editing.projectId = props.task.projectId ?? "";
 }
 
-// 同时跟踪 updatedAt：任务在别处被更新（磁贴窗口、提醒标记）后表单重新同步，
-// 防止旧数据覆盖。正在编辑时跳过重置，保留用户输入不被远程变更清掉；
-// 保存完成后 updatedAt 变化会触发同步。
+// 切换任务时结束编辑并重置表单；同一任务的后台刷新保留正在输入的内容。
 watch(
   () => [props.task.id, props.task.updatedAt],
   () => {
+    if (editing.taskId !== props.task.id) editing.on = false;
     if (editing.on) return;
     syncForm();
   },
@@ -82,7 +75,9 @@ const project = computed(() =>
 );
 
 function save() {
-  emit("save", {
+  // 即使属性刚切换、watch 尚未执行，也不能把旧表单提交给新任务。
+  if (!editing.on || editing.taskId !== props.task.id) return;
+  emit("save", editing.taskId, {
     title: editing.title,
     notes: editing.notes.trim() ? editing.notes : null,
     priority: editing.priority,

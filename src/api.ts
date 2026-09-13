@@ -9,6 +9,8 @@ export const api = {
   completeTask: (id: string) => invoke<Task>("complete_task", { id }),
   deleteTask: (id: string) => invoke<void>("delete_task", { id }),
   markNotified: (id: string) => invoke<Task>("mark_notified", { id }),
+  sendNotification: (options: { title: string; body: string }) =>
+    invoke<void>("send_notification", options),
   reorderTasks: (orderedIds: string[]) =>
     invoke<void>("reorder_tasks", { orderedIds }),
 

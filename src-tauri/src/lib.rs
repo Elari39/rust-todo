@@ -41,6 +41,9 @@ pub fn run() {
                 if close_to_tray && !platform::shutting_down() {
                     api.prevent_close();
                     let _ = window.hide();
+                } else {
+                    // 直接退出须同时关闭磁贴，避免主窗口销毁后进程仍驻留。
+                    app.exit(0);
                 }
             }
             // 磁贴可被自身 × 按钮或 toggle_tile_window 直接关闭，销毁后广播
@@ -104,6 +107,7 @@ pub fn run() {
             commands::complete_task,
             commands::delete_task,
             commands::mark_notified,
+            commands::send_notification,
             commands::reorder_tasks,
             commands::list_projects,
             commands::create_project,

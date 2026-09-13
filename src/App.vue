@@ -28,6 +28,7 @@ const {
   selected,
   pending,
   todayTasks,
+  todayCompletedTasks,
   todayCount,
   create,
   update,
@@ -134,6 +135,7 @@ function setStatus(status: TaskStatus) {
           v-if="view === 'today'"
           :now="now"
           :tasks="todayTasks"
+          :completed-tasks="todayCompletedTasks"
           :selected="selected"
           :on-create="createQuick"
           @select="select"
