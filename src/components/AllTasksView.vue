@@ -12,6 +12,7 @@ import TaskDetail from "./TaskDetail.vue";
 const props = defineProps<{
   tasks: Task[];
   selected: Task | null;
+  onSave: (id: string, patch: TaskPatch) => Promise<void>;
   projectId?: string | null;
   /** 搜索词来自标题栏（App.vue），由 prop 驱动 */
   query: string;
@@ -22,7 +23,6 @@ const emit = defineEmits<{
   complete: [id: string];
   reopen: [id: string];
   remove: [id: string];
-  save: [id: string, patch: TaskPatch];
   status: [status: TaskStatus];
   clearProject: [];
   reorder: [orderedIds: string[]];
@@ -214,11 +214,11 @@ onMounted(() => {
       <TaskDetail
         v-if="selected"
         :task="selected"
+        :on-save="onSave"
         @close="emit('select', null)"
         @complete="emit('complete', selected.id)"
         @reopen="emit('reopen', selected.id)"
         @remove="emit('remove', selected.id)"
-        @save="(id, patch) => emit('save', id, patch)"
         @status="(status) => emit('status', status)"
       />
     </div>

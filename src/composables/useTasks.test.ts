@@ -4,7 +4,7 @@ import { api } from "../api";
 import { makeTask } from "../test/fixtures";
 
 vi.mock("../api", () => ({
-  api: { listTasks: vi.fn(), completeTask: vi.fn(), updateTask: vi.fn() },
+  api: { listTasks: vi.fn(), completeTask: vi.fn(), updateTask: vi.fn(), markNotified: vi.fn() },
 }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
@@ -20,6 +20,19 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("批量提醒确认保留各自的 token，并只刷新一次列表", async () => {
+  vi.mocked(api.listTasks).mockResolvedValue([]);
+  vi.mocked(api.markNotified).mockResolvedValue(makeTask());
+  const store = (await import("./useTasks")).useTasks();
+  await store.markNotifiedMany([
+    { id: "A", reminderToken: "token-a" },
+    { id: "B", reminderToken: "token-b" },
+  ]);
+  expect(api.markNotified).toHaveBeenNthCalledWith(1, "A", "token-a");
+  expect(api.markNotified).toHaveBeenNthCalledWith(2, "B", "token-b");
+  expect(api.listTasks).toHaveBeenCalledTimes(1);
+});
 
 describe("今日完成任务来源", () => {
   it("完成逾期任务后增加完成数，重新打开后恢复待办", async () => {

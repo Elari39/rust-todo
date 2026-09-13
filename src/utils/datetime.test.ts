@@ -29,6 +29,7 @@ function task(overrides: Partial<Task> = {}): Task {
     completedAt: null,
     projectId: null,
     notified: false,
+    reminderToken: "reminder-test",
     sortOrder: 1,
     createdAt: "2026-09-09T09:00:00",
     updatedAt: "2026-09-09T09:00:00",

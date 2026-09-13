@@ -155,8 +155,12 @@ pub async fn mark_notified(
     window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     id: String,
+    reminder_token: String,
 ) -> Result<Task, String> {
-    let task = with_db(&state.db, move |conn| db::mark_notified(conn, &id)).await?;
+    let task = with_db(&state.db, move |conn| {
+        db::mark_notified(conn, &id, &reminder_token)
+    })
+    .await?;
     emit_tasks_changed(&window);
     Ok(task)
 }

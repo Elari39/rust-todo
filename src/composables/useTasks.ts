@@ -2,7 +2,7 @@ import { computed, ref } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api } from "../api";
-import type { NewTask, Task, TaskPatch, TaskStatus } from "../types";
+import type { NewTask, ReminderConfirmation, Task, TaskPatch, TaskStatus } from "../types";
 import { useClock } from "./useClock";
 import { isOverdue, isTodayStamp, overlapsToday } from "../utils/datetime";
 
@@ -125,10 +125,10 @@ async function remove(id: string) {
 }
 
 /** 批量标记已提醒：合并为一次列表刷新，避免每个到期任务各拉一次全量数据 */
-async function markNotifiedMany(ids: string[]) {
-  for (const id of ids) {
+async function markNotifiedMany(confirmations: ReminderConfirmation[]) {
+  for (const { id, reminderToken } of confirmations) {
     try {
-      await api.markNotified(id);
+      await api.markNotified(id, reminderToken);
     } catch (err) {
       // 单个标记失败（如任务已被其他窗口删除）不中断，横幅提示后继续
       error.value = err instanceof Error ? err.message : String(err);

@@ -14,6 +14,7 @@ pub struct Task {
     pub completed_at: Option<String>,
     pub project_id: Option<String>,
     pub notified: bool,
+    pub reminder_token: String,
     pub sort_order: i64,
     pub created_at: String,
     pub updated_at: String,

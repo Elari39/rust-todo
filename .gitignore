@@ -15,11 +15,40 @@ src-tauri/target
 src-tauri/gen
 coverage/
 
+# 工具缓存与 TypeScript 增量构建文件
+.pnpm-store/
+.vite/
+.vite-temp/
+*.tsbuildinfo
+
+# 本地环境变量，保留可提交的配置示例
+.env
+.env.*
+!.env.example
+!.env.*.example
+
 # 数据库文件安全网：数据库正常在 %APPDATA%，绝不该出现在仓库里
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
+*.db.corrupt-*
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+
+# 临时复制到仓库根目录的用户数据与发行产物
+/todo-backup-*.json
+/settings.json.tmp
+/settings.json.bak
+/todo.exe
+/Todo_*-setup.exe
+/Todo_*_portable.zip
 
 # Editor directories and files
 .vscode/*

@@ -17,6 +17,7 @@ export interface TestNode {
   getRootNode: () => TestNode;
   addEventListener: () => void;
   removeEventListener: () => void;
+  focus: () => void;
 }
 
 function node(tag: string, text = ""): TestNode {
@@ -43,6 +44,7 @@ function node(tag: string, text = ""): TestNode {
     },
     addEventListener() {},
     removeEventListener() {},
+    focus() {},
   };
 }
 
@@ -119,5 +121,5 @@ export function hasClass(target: TestNode, className: string): boolean {
 export function trigger(target: TestNode, handler: string, ...args: unknown[]) {
   const callback = target.props[handler];
   if (typeof callback !== "function") throw new Error(`节点缺少事件: ${handler}`);
-  callback(...(args.length ? args : [{ preventDefault() {}, stopPropagation() {} }]));
+  return callback(...(args.length ? args : [{ preventDefault() {}, stopPropagation() {} }]));
 }

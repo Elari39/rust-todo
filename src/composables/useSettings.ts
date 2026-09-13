@@ -1,7 +1,7 @@
 import { ref } from "vue";
 import { api } from "../api";
 import type { AppSettings } from "../types";
-import { setLocale, type Locale } from "../i18n";
+import { setLocale } from "../i18n";
 
 // 模块级单例：设置在主窗口内全局共享
 const settings = ref<AppSettings>({
@@ -11,26 +11,44 @@ const settings = ref<AppSettings>({
 });
 const loaded = ref(false);
 const loadError = ref("");
-let saveQueue: Promise<void> = Promise.resolve();
+let operationQueue: Promise<void> = Promise.resolve();
+
+function enqueue<T>(run: () => Promise<T>): Promise<T> {
+  const pending = operationQueue.then(run);
+  // 失败只影响当前调用，不阻塞后续的读取、保存和重试。
+  operationQueue = pending.then(() => {}, () => {});
+  return pending;
+}
+
+async function readSettings() {
+  try {
+    settings.value = await api.getSettings();
+    loaded.value = true;
+    loadError.value = "";
+    setLocale(settings.value.locale === "zh-CN" ? settings.value.locale : "zh-CN");
+  } catch (err) {
+    loadError.value = err instanceof Error ? err.message : String(err);
+    throw err;
+  }
+}
 
 export function useSettings() {
-  async function load(force = false) {
-    if (loaded.value && !force) return;
-    try {
-      settings.value = await api.getSettings();
-      loaded.value = true;
-      loadError.value = "";
-      if (settings.value.locale === "zh-CN") setLocale(settings.value.locale as Locale);
-    } catch (err) {
-      // 读不到就用默认值，设置页保存时会重试；但失败原因要让用户可见
-      loadError.value = err instanceof Error ? err.message : String(err);
-    }
+  function load(force = false) {
+    return enqueue(async () => {
+      if (loaded.value && !force) return;
+      try {
+        await readSettings();
+      } catch {
+        // 首次读取失败时允许展示默认值，但保存前必须重试并读到真实设置。
+      }
+    });
   }
 
   function save(patch: Partial<AppSettings>) {
     const changes = { ...patch };
     // 调用方只提交本次修改；轮到本次写入时再合并最新状态，避免捕获旧快照。
-    const pending = saveQueue.then(async () => {
+    return enqueue(async () => {
+      if (!loaded.value) await readSettings();
       const next = { ...settings.value, ...changes };
       const saved = await api.saveSettings({
         closeToTray: next.closeToTray,
@@ -38,12 +56,10 @@ export function useSettings() {
         locale: next.locale || "zh-CN",
       });
       settings.value = saved;
+      loadError.value = "";
       setLocale(saved.locale === "zh-CN" ? saved.locale : "zh-CN");
       return saved;
     });
-    // 失败仍向当前调用方抛出，但不能阻塞队列中后续的设置保存。
-    saveQueue = pending.then(() => {}, () => {});
-    return pending;
   }
 
   return { settings, loaded, loadError, load, save };

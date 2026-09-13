@@ -8,7 +8,8 @@ export const api = {
     invoke<Task>("update_task", { id, patch }),
   completeTask: (id: string) => invoke<Task>("complete_task", { id }),
   deleteTask: (id: string) => invoke<void>("delete_task", { id }),
-  markNotified: (id: string) => invoke<Task>("mark_notified", { id }),
+  markNotified: (id: string, reminderToken: string) =>
+    invoke<Task>("mark_notified", { id, reminderToken }),
   sendNotification: (options: { title: string; body: string }) =>
     invoke<void>("send_notification", options),
   reorderTasks: (orderedIds: string[]) =>

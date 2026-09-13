@@ -32,6 +32,7 @@ const props = defineProps<{
   completedTasks: Task[];
   selected: Task | null;
   onCreate: (payload: { title: string; kind: TaskKind; dueAt: string }) => Promise<void>;
+  onSave: (id: string, patch: TaskPatch) => Promise<void>;
 }>();
 
 const emit = defineEmits<{
@@ -39,13 +40,13 @@ const emit = defineEmits<{
   complete: [id: string];
   reopen: [id: string];
   remove: [id: string];
-  save: [id: string, patch: TaskPatch];
   status: [status: TaskStatus];
 }>();
 
 const { openCreate } = useCreateModal();
 
 const draft = ref("");
+const submitting = ref(false);
 const dueAt = ref(toInputValue(defaultDue()));
 const dueOpen = ref(false);
 
@@ -119,19 +120,22 @@ const groups = computed(() => {
 });
 
 async function submit(kind: TaskKind) {
-  const title = draft.value.trim();
-  if (!title) return;
+  const submittedDraft = draft.value;
+  const title = submittedDraft.trim();
+  if (!title || submitting.value) return;
+  submitting.value = true;
   try {
     await props.onCreate({
       title,
       kind,
       dueAt: fromInputValue(dueAt.value) ?? defaultDue(),
     });
+    if (draft.value === submittedDraft) draft.value = "";
   } catch {
     // 失败已在错误横幅展示；保留输入让用户直接重试，不必重打
-    return;
+  } finally {
+    submitting.value = false;
   }
-  draft.value = "";
 }
 </script>
 
@@ -199,7 +203,7 @@ async function submit(kind: TaskKind) {
           </section>
         </div>
 
-        <form class="composer" @submit.prevent="submit('quick')">
+        <form class="composer" :aria-busy="submitting" @submit.prevent="submit('quick')">
           <input v-model="draft" type="text" :placeholder="t('today.composerPlaceholder')" />
           <div class="due-wrap">
             <button class="due-chip" type="button" :title="t('today.composerDue')" @click="dueOpen = !dueOpen">
@@ -232,12 +236,13 @@ async function submit(kind: TaskKind) {
           <button
             class="btn btn-ghost"
             type="button"
+            :disabled="submitting"
             :title="t('today.detailedTip')"
             @click="submit('detailed')"
           >
             <Plus :size="15" /> {{ t("today.detailedCreate") }}
           </button>
-          <button class="btn btn-orange" type="submit">
+          <button class="btn btn-orange" type="submit" :disabled="submitting">
             <Zap :size="15" /> {{ t("today.quickCreate") }}
           </button>
         </form>
@@ -246,11 +251,11 @@ async function submit(kind: TaskKind) {
       <TaskDetail
         v-if="selected"
         :task="selected"
+        :on-save="onSave"
         @close="emit('select', null)"
         @complete="emit('complete', selected.id)"
         @reopen="emit('reopen', selected.id)"
         @remove="emit('remove', selected.id)"
-        @save="(id, patch) => emit('save', id, patch)"
         @status="(status) => emit('status', status)"
       />
     </div>

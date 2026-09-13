@@ -13,6 +13,7 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     completedAt: null,
     projectId: null,
     notified: false,
+    reminderToken: "reminder-1",
     sortOrder: 1,
     createdAt: "2026-09-13T09:00:00",
     updatedAt: "2026-09-13T09:00:00",

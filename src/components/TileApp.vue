@@ -19,6 +19,7 @@ const { todayTasks, tasks, error, create, complete, reopen, refresh } = useTasks
 const clock = useClock();
 
 const draft = ref("");
+const submitting = ref(false);
 const dueAt = ref(toInputValue(defaultDue()));
 let poll = 0;
 
@@ -146,8 +147,10 @@ watch(tasks, (list) => {
 });
 
 async function add() {
-  const title = draft.value.trim();
-  if (!title) return;
+  const submittedDraft = draft.value;
+  const title = submittedDraft.trim();
+  if (!title || submitting.value) return;
+  submitting.value = true;
   try {
     await create({
       title,
@@ -157,11 +160,12 @@ async function add() {
       startAt: toStamp(new Date()),
       dueAt: fromInputValue(dueAt.value) ?? defaultDue(),
     });
+    if (draft.value === submittedDraft) draft.value = "";
   } catch {
     // 失败已在错误横幅展示；保留输入让用户直接重试
-    return;
+  } finally {
+    submitting.value = false;
   }
-  draft.value = "";
 }
 
 // in-flight 守卫：处理完成前忽略同一任务的重复点击，避免 complete/reopen 竞态来回翻转
@@ -228,7 +232,7 @@ async function toggle(id: string, done: boolean) {
       </li>
     </TransitionGroup>
 
-    <form class="tile-add" @submit.prevent="add">
+    <form class="tile-add" :aria-busy="submitting" @submit.prevent="add">
       <Plus :size="14" />
       <input v-model="draft" type="text" :placeholder="t('tile.addPlaceholder')" />
     </form>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { Check, Pencil, Play, RotateCcw, Trash2, X } from "lucide-vue-next";
 import { useClock } from "../composables/useClock";
 import { useProjects } from "../composables/useProjects";
@@ -15,6 +15,7 @@ import { t, tf } from "../i18n";
 
 const props = defineProps<{
   task: Task;
+  onSave: (id: string, patch: TaskPatch) => Promise<void>;
 }>();
 
 const emit = defineEmits<{
@@ -23,11 +24,12 @@ const emit = defineEmits<{
   reopen: [];
   remove: [];
   status: [status: TaskStatus];
-  save: [id: string, patch: TaskPatch];
 }>();
 
 const { projects, nameOf } = useProjects();
 const clock = useClock();
+const saving = ref(false);
+let editSession = 0;
 
 const editing = reactive({
   on: false,
@@ -56,7 +58,11 @@ function syncForm() {
 watch(
   () => [props.task.id, props.task.updatedAt],
   () => {
-    if (editing.taskId !== props.task.id) editing.on = false;
+    if (editing.taskId !== props.task.id) {
+      editSession += 1;
+      saving.value = false;
+      editing.on = false;
+    }
     if (editing.on) return;
     syncForm();
   },
@@ -64,6 +70,7 @@ watch(
 );
 
 function startEdit() {
+  editSession += 1;
   syncForm();
   editing.on = true;
 }
@@ -74,19 +81,29 @@ const project = computed(() =>
   props.task.projectId ? projects.value.find((p) => p.id === props.task.projectId) : undefined,
 );
 
-function save() {
+async function save() {
   // 即使属性刚切换、watch 尚未执行，也不能把旧表单提交给新任务。
-  if (!editing.on || editing.taskId !== props.task.id) return;
-  emit("save", editing.taskId, {
-    title: editing.title,
-    notes: editing.notes.trim() ? editing.notes : null,
-    priority: editing.priority,
-    kind: editing.kind,
-    startAt: fromInputValue(editing.startAt),
-    dueAt: fromInputValue(editing.dueAt),
-    projectId: editing.projectId,
-  });
-  editing.on = false;
+  if (!editing.on || editing.taskId !== props.task.id || saving.value) return;
+  const session = editSession;
+  const taskId = editing.taskId;
+  saving.value = true;
+  try {
+    await props.onSave(taskId, {
+      title: editing.title,
+      notes: editing.notes.trim() ? editing.notes : null,
+      priority: editing.priority,
+      kind: editing.kind,
+      startAt: fromInputValue(editing.startAt),
+      dueAt: fromInputValue(editing.dueAt),
+      projectId: editing.projectId,
+    });
+    // 切换任务后再返回，也属于新的一次编辑，旧请求不能关闭新表单。
+    if (session === editSession && props.task.id === taskId) editing.on = false;
+  } catch {
+    // 保存失败由任务状态模块显示错误；当前表单保持打开，保留输入供重试。
+  } finally {
+    if (session === editSession) saving.value = false;
+  }
 }
 
 function removeWithConfirm() {
@@ -159,28 +176,28 @@ function removeWithConfirm() {
     </template>
 
     <form v-else class="form-grid" @submit.prevent="save">
-      <input v-model="editing.title" required :placeholder="t('form.titlePlaceholder')" />
-      <textarea v-model="editing.notes" rows="3" :placeholder="t('form.notesPlaceholder')" />
-      <select v-model="editing.projectId">
+      <input v-model="editing.title" required :disabled="saving" :placeholder="t('form.titlePlaceholder')" />
+      <textarea v-model="editing.notes" rows="3" :disabled="saving" :placeholder="t('form.notesPlaceholder')" />
+      <select v-model="editing.projectId" :disabled="saving">
         <option value="">{{ t("common.ungrouped") }}</option>
         <option v-for="project in projects" :key="project.id" :value="project.id">
           {{ project.name }}
         </option>
       </select>
-      <select v-model="editing.priority">
+      <select v-model="editing.priority" :disabled="saving">
         <option value="low">{{ t("priority.low") }}</option>
         <option value="normal">{{ t("priority.normal") }}</option>
         <option value="high">{{ t("priority.high") }}</option>
       </select>
-      <select v-model="editing.kind">
+      <select v-model="editing.kind" :disabled="saving">
         <option value="quick">{{ t("kind.quick") }}</option>
         <option value="detailed">{{ t("kind.detailed") }}</option>
       </select>
-      <input v-model="editing.startAt" type="datetime-local" />
-      <input v-model="editing.dueAt" type="datetime-local" />
+      <input v-model="editing.startAt" type="datetime-local" :disabled="saving" />
+      <input v-model="editing.dueAt" type="datetime-local" :disabled="saving" />
       <div class="detail-actions">
-        <button class="btn btn-green" type="submit">{{ t("common.save") }}</button>
-        <button class="btn btn-ghost" type="button" @click="editing.on = false">{{ t("common.cancel") }}</button>
+        <button class="btn btn-green" type="submit" :disabled="saving">{{ t("common.save") }}</button>
+        <button class="btn btn-ghost" type="button" :disabled="saving" @click="editing.on = false">{{ t("common.cancel") }}</button>
       </div>
     </form>
   </aside>

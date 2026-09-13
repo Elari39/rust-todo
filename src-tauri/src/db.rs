@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   completed_at TEXT,
   project_id TEXT,
   notified INTEGER NOT NULL DEFAULT 0,
+  reminder_token TEXT NOT NULL DEFAULT '',
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -66,6 +67,7 @@ fn open_inner(path: &std::path::Path) -> Result<Connection, String> {
     let tasks_fresh = !table_exists(&conn, "tasks")?;
     conn.execute_batch(SCHEMA).map_err(to_err)?;
     ensure_sort_order(&conn)?;
+    ensure_reminder_tokens(&conn)?;
     // 仅当库中缺 projects/tasks 表时补种示例数据（v0.2 前的旧库没有这两张表，
     // 升级时同样补齐）；老库即使任务被用户清空也不再复活种子
     if projects_fresh || tasks_fresh {
@@ -91,6 +93,34 @@ fn ensure_sort_order(conn: &Connection) -> Result<(), String> {
          UPDATE tasks SET sort_order = (SELECT COUNT(*) FROM tasks t2 WHERE t2.rowid <= tasks.rowid);",
     )
     .map_err(to_err)
+}
+
+/// 为旧任务补齐提醒代次；已存在的 token 保持不变，重启不会重新提醒。
+fn ensure_reminder_tokens(conn: &Connection) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(to_err)?;
+    if !column_exists(&tx, "tasks", "reminder_token")? {
+        tx.execute_batch("ALTER TABLE tasks ADD COLUMN reminder_token TEXT NOT NULL DEFAULT '';")
+            .map_err(to_err)?;
+    }
+    let ids = {
+        let mut stmt = tx
+            .prepare("SELECT id FROM tasks WHERE reminder_token = ''")
+            .map_err(to_err)?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(to_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(to_err)?;
+        rows
+    };
+    for id in ids {
+        tx.execute(
+            "UPDATE tasks SET reminder_token = ?1 WHERE id = ?2",
+            params![Uuid::new_v4().to_string(), id],
+        )
+        .map_err(to_err)?;
+    }
+    tx.commit().map_err(to_err)
 }
 
 fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
@@ -272,13 +302,14 @@ fn map_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         completed_at: row.get(8)?,
         project_id: row.get(9)?,
         notified: row.get::<_, i64>(10)? != 0,
+        reminder_token: row.get(14)?,
         sort_order: row.get(13)?,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
     })
 }
 
-const SELECT: &str = "SELECT id, title, notes, status, priority, kind, start_at, due_at, completed_at, project_id, notified, created_at, updated_at, sort_order FROM tasks";
+const SELECT: &str = "SELECT id, title, notes, status, priority, kind, start_at, due_at, completed_at, project_id, notified, created_at, updated_at, sort_order, reminder_token FROM tasks";
 
 pub fn list(conn: &Connection) -> Result<Vec<Task>, String> {
     let mut stmt = conn
@@ -317,8 +348,8 @@ pub fn insert(conn: &Connection, input: NewTask) -> Result<Task, String> {
     let priority = normalize_priority(input.priority.as_deref().unwrap_or("normal"));
     let kind = normalize_kind(input.kind.as_deref().unwrap_or("quick"));
     conn.execute(
-        "INSERT INTO tasks (id, title, notes, status, priority, kind, start_at, due_at, completed_at, project_id, notified, sort_order, created_at, updated_at)
-         VALUES (?1, ?2, ?3, 'pending', ?4, ?5, ?6, ?7, NULL, ?9, 0, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM tasks), ?8, ?8)",
+        "INSERT INTO tasks (id, title, notes, status, priority, kind, start_at, due_at, completed_at, project_id, notified, sort_order, created_at, updated_at, reminder_token)
+         VALUES (?1, ?2, ?3, 'pending', ?4, ?5, ?6, ?7, NULL, ?9, 0, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM tasks), ?8, ?8, ?10)",
         params![
             id,
             title,
@@ -328,7 +359,8 @@ pub fn insert(conn: &Connection, input: NewTask) -> Result<Task, String> {
             start_at,
             due_at,
             stamp,
-            input.project_id
+            input.project_id,
+            Uuid::new_v4().to_string()
         ],
     )
     .map_err(to_err)?;
@@ -377,6 +409,11 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
     } else {
         current.notified
     };
+    let reminder_token = if due_changed || reopened {
+        Uuid::new_v4().to_string()
+    } else {
+        current.reminder_token
+    };
     // 只校验显式传入的 project_id；存量数据里的孤儿引用不阻塞后续编辑
     let project_id = match patch.project_id {
         Some(value) => {
@@ -399,8 +436,8 @@ pub fn update(conn: &Connection, id: &str, patch: TaskPatch) -> Result<Task, Str
     };
     let stamp = now_stamp();
     conn.execute(
-        "UPDATE tasks SET title=?1, notes=?2, priority=?3, kind=?4, start_at=?5, due_at=?6, status=?7, completed_at=?8, project_id=?9, notified=?10, updated_at=?11 WHERE id=?12",
-        params![title, notes, priority, kind, start_at, due_at, status, completed_at, project_id, notified, stamp, id],
+        "UPDATE tasks SET title=?1, notes=?2, priority=?3, kind=?4, start_at=?5, due_at=?6, status=?7, completed_at=?8, project_id=?9, notified=?10, updated_at=?11, reminder_token=?13 WHERE id=?12",
+        params![title, notes, priority, kind, start_at, due_at, status, completed_at, project_id, notified, stamp, id, reminder_token],
     )
     .map_err(to_err)?;
     get(conn, id)
@@ -433,13 +470,13 @@ pub fn delete(conn: &Connection, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn mark_notified(conn: &Connection, id: &str) -> Result<Task, String> {
-    let changed = conn
-        .execute("UPDATE tasks SET notified = 1 WHERE id = ?1", [id])
-        .map_err(to_err)?;
-    if changed == 0 {
-        return Err("任务不存在".into());
-    }
+pub fn mark_notified(conn: &Connection, id: &str, reminder_token: &str) -> Result<Task, String> {
+    // 发送系统通知期间可能发生改期、重开或导入；过期确认不影响新的提醒。
+    conn.execute(
+        "UPDATE tasks SET notified = 1 WHERE id = ?1 AND reminder_token = ?2 AND status != 'completed'",
+        params![id, reminder_token],
+    )
+    .map_err(to_err)?;
     get(conn, id)
 }
 
@@ -604,8 +641,8 @@ pub fn import_replace(
     }
     for row in &task_rows {
         tx.execute(
-            "INSERT INTO tasks (id, title, notes, status, priority, kind, start_at, due_at, completed_at, project_id, notified, sort_order, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO tasks (id, title, notes, status, priority, kind, start_at, due_at, completed_at, project_id, notified, sort_order, created_at, updated_at, reminder_token)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 row.id,
                 row.title,
@@ -620,7 +657,9 @@ pub fn import_replace(
                 row.notified,
                 row.sort_order,
                 row.created_at,
-                row.updated_at
+                row.updated_at,
+                // 不复用备份中的 token，防止导入前尚未返回的通知确认污染新数据。
+                Uuid::new_v4().to_string()
             ],
         )
         .map_err(to_err)?;
@@ -896,7 +935,7 @@ mod tests {
             },
         )
         .unwrap();
-        mark_notified(&conn, &task.id).unwrap();
+        mark_notified(&conn, &task.id, &task.reminder_token).unwrap();
 
         let unchanged = update(
             &conn,
@@ -1089,7 +1128,8 @@ mod tests {
             },
         )
         .unwrap();
-        mark_notified(&conn, &task.id).unwrap();
+        assert!(Uuid::parse_str(&task.reminder_token).is_ok());
+        mark_notified(&conn, &task.id, &task.reminder_token).unwrap();
         assert!(get(&conn, &task.id).unwrap().notified);
 
         // 改期后重新进入提醒流程
@@ -1103,9 +1143,15 @@ mod tests {
         )
         .unwrap();
         assert!(!rescheduled.notified);
+        assert_ne!(rescheduled.reminder_token, task.reminder_token);
+        assert!(
+            !mark_notified(&conn, &task.id, &task.reminder_token)
+                .unwrap()
+                .notified
+        );
 
         // 截止时间未变时保留已提醒状态
-        mark_notified(&conn, &task.id).unwrap();
+        mark_notified(&conn, &task.id, &rescheduled.reminder_token).unwrap();
         let untouched = update(
             &conn,
             &task.id,
@@ -1116,6 +1162,7 @@ mod tests {
         )
         .unwrap();
         assert!(untouched.notified);
+        assert_eq!(untouched.reminder_token, rescheduled.reminder_token);
 
         // 重开同样重置提醒
         complete(&conn, &task.id).unwrap();
@@ -1129,6 +1176,73 @@ mod tests {
         )
         .unwrap();
         assert!(!reopened.notified);
+        assert_ne!(reopened.reminder_token, rescheduled.reminder_token);
+        assert!(
+            !mark_notified(&conn, &task.id, &rescheduled.reminder_token)
+                .unwrap()
+                .notified
+        );
+        assert!(
+            mark_notified(&conn, &task.id, &reopened.reminder_token)
+                .unwrap()
+                .notified
+        );
+    }
+
+    #[test]
+    fn completed_and_rescheduled_back_tasks_ignore_stale_confirmations() {
+        let conn = memory();
+        let task = insert(
+            &conn,
+            NewTask {
+                due_at: Some("2026-09-13T18:40:00".into()),
+                ..bare_new("任务")
+            },
+        )
+        .unwrap();
+        complete(&conn, &task.id).unwrap();
+        assert!(
+            !mark_notified(&conn, &task.id, &task.reminder_token)
+                .unwrap()
+                .notified
+        );
+
+        let reopened = update(
+            &conn,
+            &task.id,
+            serde_json::from_str(r#"{"status":"pending"}"#).unwrap(),
+        )
+        .unwrap();
+        let cleared = update(
+            &conn,
+            &task.id,
+            serde_json::from_str(r#"{"dueAt":null}"#).unwrap(),
+        )
+        .unwrap();
+        assert_ne!(cleared.reminder_token, reopened.reminder_token);
+        assert!(
+            !mark_notified(&conn, &task.id, &reopened.reminder_token)
+                .unwrap()
+                .notified
+        );
+        let restored = update(
+            &conn,
+            &task.id,
+            serde_json::from_str(r#"{"dueAt":"2026-09-13T18:40:00"}"#).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(restored.due_at, task.due_at);
+        assert_ne!(restored.reminder_token, task.reminder_token);
+        assert!(
+            !mark_notified(&conn, &task.id, &task.reminder_token)
+                .unwrap()
+                .notified
+        );
+        assert!(
+            mark_notified(&conn, &task.id, &restored.reminder_token)
+                .unwrap()
+                .notified
+        );
     }
 
     #[test]
@@ -1173,7 +1287,7 @@ mod tests {
     fn mark_notified_unknown_id_fails() {
         let conn = memory();
         assert_eq!(
-            mark_notified(&conn, "no-such-id").unwrap_err(),
+            mark_notified(&conn, "no-such-id", "stale-token").unwrap_err(),
             "任务不存在"
         );
     }
@@ -1202,6 +1316,7 @@ mod tests {
         .unwrap();
         assert_eq!(started.status, "in_progress");
         assert_eq!(started.completed_at, None);
+        mark_notified(&conn, &task.id, &started.reminder_token).unwrap();
 
         // in_progress -> completed
         let done = complete(&conn, &task.id).unwrap();
@@ -1209,7 +1324,6 @@ mod tests {
         assert!(done.completed_at.is_some());
 
         // completed -> in_progress：视为重开，重置提醒
-        mark_notified(&conn, &task.id).unwrap();
         let restarted = update(
             &conn,
             &task.id,
@@ -1222,6 +1336,7 @@ mod tests {
         assert_eq!(restarted.status, "in_progress");
         assert_eq!(restarted.completed_at, None);
         assert!(!restarted.notified);
+        assert_ne!(restarted.reminder_token, started.reminder_token);
     }
 
     #[test]
@@ -1265,8 +1380,92 @@ mod tests {
         };
         assert!(order_of("a") < order_of("b"));
         assert!(order_of("b") < order_of("c"));
+        let tokens: Vec<_> = rows
+            .iter()
+            .map(|task| task.reminder_token.clone())
+            .collect();
+        assert!(tokens.iter().all(|token| Uuid::parse_str(token).is_ok()));
+        assert_eq!(
+            tokens
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            3
+        );
         drop(conn);
+        let reopened = open(&db_path).unwrap();
+        assert_eq!(
+            list(&reopened)
+                .unwrap()
+                .iter()
+                .map(|task| task.reminder_token.clone())
+                .collect::<Vec<_>>(),
+            tokens,
+        );
+        drop(reopened);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reminder_token_migration_preserves_existing_task_data() {
+        let conn = memory();
+        let task = insert(
+            &conn,
+            NewTask {
+                notes: Some("保留备注".into()),
+                due_at: Some("2026-09-13T18:40:00".into()),
+                ..bare_new("已提醒任务")
+            },
+        )
+        .unwrap();
+        let before = mark_notified(&conn, &task.id, &task.reminder_token).unwrap();
+        // 去掉新列，得到升级前包含 sort_order、notified 的实际旧表结构。
+        conn.execute_batch("ALTER TABLE tasks DROP COLUMN reminder_token;")
+            .unwrap();
+        ensure_reminder_tokens(&conn).unwrap();
+        let migrated = get(&conn, &task.id).unwrap();
+        assert!(Uuid::parse_str(&migrated.reminder_token).is_ok());
+        let mut expected = serde_json::to_value(before).unwrap();
+        expected["reminderToken"] = migrated.reminder_token.clone().into();
+        assert_eq!(serde_json::to_value(&migrated).unwrap(), expected);
+        ensure_reminder_tokens(&conn).unwrap();
+        assert_eq!(
+            get(&conn, &task.id).unwrap().reminder_token,
+            migrated.reminder_token
+        );
+    }
+
+    #[test]
+    fn importing_backups_renews_tokens_and_accepts_legacy_tasks() {
+        let mut conn = memory();
+        let task = insert(&conn, bare_new("备份任务")).unwrap();
+        let mut backup_task = serde_json::to_value(&task).unwrap();
+        let mut previous_token = task.reminder_token;
+        // 新备份带 token、旧备份不带 token，两种格式都必须重新生成代次。
+        for legacy in [false, true] {
+            if legacy {
+                backup_task.as_object_mut().unwrap().remove("reminderToken");
+            }
+            let payload = serde_json::from_value(serde_json::json!({
+                "app": "todo", "version": 1, "tasks": [backup_task], "projects": [],
+            }))
+            .unwrap();
+            assert_eq!(import_replace(&mut conn, payload).unwrap(), (1, 0));
+            let restored = get(&conn, &task.id).unwrap();
+            assert!(Uuid::parse_str(&restored.reminder_token).is_ok());
+            assert_ne!(restored.reminder_token, previous_token);
+            assert!(
+                !mark_notified(&conn, &task.id, &previous_token)
+                    .unwrap()
+                    .notified
+            );
+            assert!(
+                mark_notified(&conn, &task.id, &restored.reminder_token)
+                    .unwrap()
+                    .notified
+            );
+            previous_token = restored.reminder_token;
+        }
     }
 
     #[test]

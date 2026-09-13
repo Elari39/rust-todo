@@ -21,10 +21,13 @@ export interface Task {
   completedAt: string | null;
   projectId: string | null;
   notified: boolean;
+  reminderToken: string;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }
+
+export type ReminderConfirmation = Pick<Task, "id" | "reminderToken">;
 
 export interface Project {
   id: string;

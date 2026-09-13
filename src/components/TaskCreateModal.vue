@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from "vue";
 import { X } from "lucide-vue-next";
+import { useClock } from "../composables/useClock";
 import { useCreateModal } from "../composables/useCreateModal";
 import { useProjects } from "../composables/useProjects";
 import { useTasks } from "../composables/useTasks";
@@ -11,6 +12,10 @@ import { t } from "../i18n";
 const { open, prefill, closeCreate } = useCreateModal();
 const { create } = useTasks();
 const { projects, load: loadProjects } = useProjects();
+const clock = useClock();
+const presetBase = ref(new Date());
+
+watch(clock, (now) => { presetBase.value = now; });
 
 const form = reactive({
   title: "",
@@ -27,6 +32,8 @@ const titleInput = ref<HTMLInputElement | null>(null);
 // 打开时重置表单并应用预填（日历视图会带上所选日期）
 watch(open, (isOpen) => {
   if (!isOpen) return;
+  // 打开时立即校正日期，不必等待下一次共享时钟的 30 秒更新。
+  presetBase.value = new Date();
   form.title = "";
   form.projectId = prefill.value.projectId ?? "";
   form.priority = "normal";
@@ -39,7 +46,7 @@ watch(open, (isOpen) => {
 
 // 预设保持 18:40 时刻，只切换日期
 function presetInput(offsetDays: number): string {
-  const date = new Date();
+  const date = new Date(presetBase.value);
   date.setDate(date.getDate() + offsetDays);
   date.setHours(18, 40, 0, 0);
   return toInputValue(toStamp(date));
